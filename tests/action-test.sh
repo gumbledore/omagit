@@ -191,7 +191,7 @@ rm "$STUB_DIR/merge-fail"
 
 # --- open-file with configured command ----------------------------------------------
 omagit-action open-file "$R" "README.md" >/dev/null
-assert_contains "$(tail -n1 "$STUB_LOG")" "xdg-open $R/README.md" "default open command"
+assert_contains "$(tail -n1 "$STUB_LOG")" "omarchy-launch-editor $R/README.md" "default open command"
 jq '.openFileCommand = "zeditor"' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s" && mv "$TMP/s" "$OMAGIT_CONFIG_DIR/settings.json"
 omagit-action open-file "$R" "README.md" >/dev/null; sleep 0.2
 assert_contains "$(tail -n1 "$STUB_LOG")" "zeditor $R/README.md" "configured open command"

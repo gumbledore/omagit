@@ -49,7 +49,7 @@ IPC target `omagit` also accepts `open`, `close`, `refresh`, and
   ahead, or behind (hidden at zero). Left-click toggles the panel, right-click
   refreshes.
 - **Header** — Fetch all · Refresh · **+** (add root / add repo, manage roots)
-  · settings (opens `settings.json` with `openFileCommand`). The summary shows
+  · settings (opens `settings.json` in the Omarchy default editor). The summary shows
   the repo count, attention count, and "fetched N min ago".
 - **Rows** — `label  branch  ●dirty  ↑ahead↓behind  PR n  age  ×`. Repos found
   under a root are labeled by their path relative to it
@@ -104,7 +104,7 @@ live. There are no option menus in the panel.
 | `debounceMs` | `500` | Per-repo debounce for filesystem events |
 | `scanDepth` | `4` | How deep a root is scanned for repos |
 | `ignoreDirs` | `["node_modules", ".venv", "venv", "dist", "build", "__pycache__", ".obsidian", "target"]` | Never entered during discovery and excluded from the watcher (dotfolders and symlinks are always skipped) |
-| `openFileCommand` | `"xdg-open"` | Command that receives an absolute path; e.g. `"zeditor"` for Zed |
+| `openFileCommand` | `"omarchy-launch-editor"` | Command that receives an absolute path (default: the Omarchy default editor); e.g. `"zeditor"` for Zed |
 | `ghPrLimit` | `20` | `--limit` for `gh pr list` |
 
 Tracking lives in `~/.config/omagit/tracking.json` (`roots`, `repos`,

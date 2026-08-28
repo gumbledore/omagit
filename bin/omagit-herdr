@@ -78,10 +78,21 @@ cmd_agent() {
   fi
   [[ -n $pane ]] || err "No pane available in herdr workspace $label"
   name=$(agent_name "$label")
-  out=$(with_timeout herdr agent start "$name" --kind "$kind" --pane "$pane" 2>&1) \
-    || out=$(with_timeout herdr agent start "$name-$RANDOM" --kind "$kind" --pane "$pane" 2>&1) \
-    || err "Could not start $kind in herdr: ${out:0:200}"
-  ok "Started $kind in herdr workspace $label"
+  out=$(start_agent "$name" "$kind" "$pane") && ok "Started $kind in herdr workspace $label"
+  [[ $out == *agent_name_taken* ]] && out=$(start_agent "$name-$RANDOM" "$kind" "$pane") \
+    && ok "Started $kind in herdr workspace $label"
+  # The CLI can fail its readiness wait after the agent has already launched
+  # (e.g. a startup dialog); the pane, not the exit code, is the truth.
+  sleep 1
+  pane_has_agent "$pane" && ok "Started $kind in herdr workspace $label (still loading)"
+  err "Could not start $kind in herdr: ${out:0:200}"
+}
+
+start_agent() { with_timeout herdr agent start "$1" --kind "$2" --pane "$3" 2>&1; }
+
+pane_has_agent() {
+  hd pane list | jq -e --arg p "$1" '[.result.panes[] | select(.pane_id == $p and .agent != null)] | length > 0' >/dev/null \
+    || hd agent list | jq -e --arg p "$1" '[.result.agents[] | select(.pane_id == $p)] | length > 0' >/dev/null
 }
 
 case "${1:-}" in

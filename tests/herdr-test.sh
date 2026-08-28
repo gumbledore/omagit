@@ -46,9 +46,26 @@ assert_contains "$(cat "$STUB_LOG")" "--pane w2:p1" "agent started in root pane"
 omagit-herdr agent "$O" "Data Analysis/Neuronchat" claude >/dev/null
 assert_contains "$(cat "$STUB_LOG")" "agent start data-analysis-neuronchat --kind" "agent name sanitized"
 touch "$STUB_DIR/agent-start-fail"
+: > "$STUB_LOG"
 res=$(result_line "$(omagit-herdr agent "$O" "other" claude || true)")
 assert_contains "$res" "ERR" "agent start failure reported"
+assert_contains "$res" "agent_not_ready" "failure shows the original error"
+assert_eq "1" "$(grep -c 'agent start' "$STUB_LOG")" "no blind retry on failure"
 rm "$STUB_DIR/agent-start-fail"
+# name taken -> retry once with a suffixed name
+touch "$STUB_DIR/agent-name-taken"
+: > "$STUB_LOG"
+res=$(result_line "$(omagit-herdr agent "$O" "other" claude)")
+assert_contains "$res" "OK" "name taken: retry succeeds"
+assert_contains "$(cat "$STUB_LOG")" "agent start other-" "name taken: retried with suffix"
+# agent launched but readiness wait failed -> success, not a busy-pane error
+touch "$STUB_DIR/agent-start-late"
+: > "$STUB_LOG"
+res=$(result_line "$(omagit-herdr agent "$O" "other" claude)")
+assert_contains "$res" "OK" "late readiness: reported OK"
+assert_contains "$res" "still loading" "late readiness: notes loading"
+assert_eq "1" "$(grep -c 'agent start' "$STUB_LOG")" "late readiness: no retry into busy pane"
+rm "$STUB_DIR/agent-start-late"
 
 # server down
 touch "$STUB_DIR/herdr-down"

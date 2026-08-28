@@ -25,7 +25,13 @@ case "$1 $2" in
     jq -c --arg id "$wsid" --arg c "$cwd" --arg n "$n" '. + [{pane_id:($id+":p"+$n),workspace_id:$id,cwd:$c,agent_status:"unknown"}]' "$panes" > "$panes.t" && mv "$panes.t" "$panes"
     printf '{"id":"cli","result":{"tab":{"tab_id":"%s:t%s"},"root_pane":{"pane_id":"%s:p%s"}}}\n' "$wsid" "$n" "$wsid" "$n" ;;
   "agent start")
-    [[ -e $STUB_DIR/agent-start-fail ]] && { echo '{"error":"agent_not_ready"}' >&2; exit 1; }
+    [[ -e $STUB_DIR/agent-start-fail ]] && { echo '{"error":{"code":"agent_not_ready"}}' >&2; exit 1; }
+    [[ -e $STUB_DIR/agent-name-taken ]] && { rm "$STUB_DIR/agent-name-taken"; echo '{"error":{"code":"agent_name_taken"}}' >&2; exit 1; }
+    if [[ -e $STUB_DIR/agent-start-late ]]; then  # agent launched, readiness wait failed
+      pane=""; shift 2; while (($#)); do case "$1" in --pane) pane=$2; shift 2 ;; *) shift ;; esac; done
+      jq -c --arg p "$pane" 'map(if .pane_id==$p then .agent="claude" else . end)' "$panes" > "$panes.t" && mv "$panes.t" "$panes"
+      echo '{"error":{"code":"agent_not_ready","message":"timed out waiting for readiness"}}' >&2; exit 1
+    fi
     echo '{"id":"cli","result":{"ok":true}}' ;;
   *) echo "herdr stub: unhandled $*" >&2; exit 1 ;;
 esac

@@ -40,7 +40,6 @@ Item {
 
   // "" | commit | branch | switch | diff
   property string mode: ""
-  property bool showOutput: false
   property string diffText: ""
   property var branches: []
   property int armedMerge: -1
@@ -60,6 +59,7 @@ Item {
   }
 
   function toggle() {
+    clearStatus()
     if (expanded) { panel.expandedPath = ""; mode = "" }
     else { panel.expandedPath = path; row.armedMerge = -1 }
   }
@@ -73,10 +73,10 @@ Item {
     else if (m === "diff") { diffText = "Loading diff…"; diffProcess.running = true }
   }
 
-  function act(verb, args) {
-    row.showOutput = false
-    panel.runAction(path, verb, args || [])
-  }
+  function act(verb, args) { panel.runAction(path, verb, args || []) }
+
+  // Any click in the row dismisses a finished status message.
+  function clearStatus() { if (status && !status.busy) panel.setMap("rowStatus", path, undefined) }
 
   function submitCommit() {
     var target = commitMainToggle.checked ? "" : commitBranchField.text.trim()
@@ -134,6 +134,8 @@ Item {
     border.color: Util.alpha(row.fg, 0.15)
   }
 
+  MouseArea { anchors.fill: parent; onClicked: row.clearStatus() }  // empty space in the row
+
   ColumnLayout {
     id: body
     anchors.left: parent.left
@@ -161,10 +163,10 @@ Item {
         anchors.leftMargin: Style.space(6)
         spacing: Style.space(6)
 
-        Rectangle {
-          visible: row.herdr !== ""
+        Rectangle {  // herdr agent dot; slot always reserved so labels line up
           width: Style.space(7); height: width; radius: width / 2
           color: row.herdr === "working" ? row.accent : row.herdr === "blocked" ? row.urgent : row.muted
+          opacity: row.herdr === "" ? 0 : 1
         }
         Text {
           Layout.preferredWidth: Style.space(150)
@@ -485,20 +487,15 @@ Item {
         spacing: Style.space(2)
         Text {
           Layout.fillWidth: true
-          text: row.status ? ((row.status.ok ? "✓ " : "✗ ") + row.status.message
-                 + (!row.status.ok && row.status.output.length > 0 ? (row.showOutput ? "  [hide output]" : "  [show output]") : "")) : ""
+          text: row.status ? (row.status.ok ? "✓ " : "✗ ") + row.status.message : ""
           color: row.status && row.status.ok ? row.accent : row.urgent
           wrapMode: Text.Wrap
           font.family: row.fontFamily
           font.pixelSize: row.capSize
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: row.status && !row.status.ok && row.status.output.length > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
-            onClicked: row.showOutput = !row.showOutput
-          }
+          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: row.clearStatus() }
         }
         Text {
-          visible: row.showOutput && row.status && !row.status.ok && row.status.output.length > 0
+          visible: row.status && !row.status.ok && row.status.output.length > 0
           Layout.fillWidth: true
           text: row.status ? row.status.output.join("\n") : ""
           color: row.muted

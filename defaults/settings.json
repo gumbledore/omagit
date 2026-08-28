@@ -9,6 +9,6 @@
   "debounceMs": 500,
   "scanDepth": 4,
   "ignoreDirs": ["node_modules", ".venv", "venv", "dist", "build", "__pycache__", ".obsidian", "target"],
-  "openFileCommand": "xdg-open",
+  "openFileCommand": "omarchy-launch-editor",
   "ghPrLimit": 20
 }

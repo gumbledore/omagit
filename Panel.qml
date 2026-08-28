@@ -392,11 +392,7 @@ Panel {
     }
   }
 
-  function openSettings() {
-    var cmd = String(root.cfgVal("openFileCommand", "xdg-open")).split(/\s+/).filter(function(s) { return s !== "" })
-    if (cmd.length === 0) cmd = ["xdg-open"]
-    Quickshell.execDetached(cmd.concat([root.settingsPath]))
-  }
+  function openSettings() { Quickshell.execDetached(["omarchy-launch-config-editor", root.settingsPath]) }
 
   function openUrl(url) {
     var u = String(url || "")
@@ -540,11 +536,12 @@ Panel {
         Text {
           visible: root.headerMessage !== ""
           Layout.fillWidth: true
-          text: root.headerMessage
+          text: root.headerMessage + "  ✕"
           color: root.urgent
           wrapMode: Text.Wrap
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
+          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.headerMessage = "" }
         }
       }
 
