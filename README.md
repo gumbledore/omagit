@@ -95,7 +95,7 @@ live. There are no option menus in the panel.
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `schemaVersion` | `1` | Managed by the plugin |
-| `launcher` | `"native"` | `"native"` (`xdg-terminal-exec`, `omarchy-agent`) or `"herdr"` (workspace per repo, reused if it exists; agent-status dot on rows) |
+| `launcher` | `"native"` | `"native"` (`xdg-terminal-exec`, `omarchy-agent`) or `"herdr"` (one workspace per repo — Terminal focuses it, each agent click opens a new tab; agent-status dot on rows) |
 | `mergeStrategy` | `"squash"` | `squash` \| `merge` \| `rebase` |
 | `deleteBranchOnMerge` | `true` | Pass `--delete-branch` to `gh pr merge` |
 | `pruneGoneAfterMerge` | `true` | Delete local branches whose upstream is gone after a merge |

@@ -4,7 +4,8 @@
 #
 #   status                        STATUS<TAB>cwd<TAB>agent_status<TAB>workspace_id per agent
 #   terminal <repo> <label>       focus the repo's workspace, or create one
-#   agent <repo> <label> <kind>   same, then `herdr agent start` in a free pane
+#   agent <repo> <label> <kind>   same, then `herdr agent start` in a new tab
+#                                 (never in an existing pane; each click = one more agent)
 
 source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/../lib/common.sh"
 
@@ -20,15 +21,6 @@ find_workspace() {
   id=$(hd pane list | jq -r --arg c "$repo" '[.result.panes[] | select(.cwd == $c or .foreground_cwd == $c)][0].workspace_id // empty')
   [[ -n $id ]] || id=$(hd workspace list | jq -r --arg l "$label" '[.result.workspaces[] | select(.label == $l)][0].workspace_id // empty')
   printf '%s' "$id"
-}
-
-# Pane in <ws> at cwd <repo> with no agent attached.
-free_pane() {
-  local ws=$1 repo=$2 busy
-  busy=$(hd agent list | jq -r '.result.agents[].pane_id')
-  hd pane list | jq -r --arg w "$ws" --arg c "$repo" --arg busy "$busy" '
-    ($busy | split("\n")) as $b
-    | [.result.panes[] | .pane_id as $p | select(.workspace_id == $w and (.cwd == $c or .foreground_cwd == $c) and (.agent == null) and (($b | index($p)) == null))][0].pane_id // empty'
 }
 
 create_workspace() { # prints "wsid<TAB>root pane"
@@ -70,11 +62,8 @@ cmd_agent() {
     ws=${created%%$'\t'*}; pane=${created#*$'\t'}
   else
     hd workspace focus "$ws" >/dev/null
-    pane=$(free_pane "$ws" "$repo")
-    if [[ -z $pane ]]; then
-      out=$(hd tab create --workspace "$ws" --cwd "$repo" --focus) || err "Could not open a tab in herdr workspace $label"
-      pane=$(jq -r '.result.root_pane.pane_id // .result.root_pane.id // .result.root_pane' <<<"$out")
-    fi
+    out=$(hd tab create --workspace "$ws" --cwd "$repo" --focus) || err "Could not open a tab in herdr workspace $label"
+    pane=$(jq -r '.result.root_pane.pane_id // .result.root_pane.id // .result.root_pane' <<<"$out")
   fi
   [[ -n $pane ]] || err "No pane available in herdr workspace $label"
   name=$(agent_name "$label")

@@ -23,19 +23,16 @@ out=$(omagit-herdr terminal "$R" "repo")
 assert_contains "$(cat "$STUB_LOG")" "workspace focus w1" "second call focuses existing"
 assert_not_contains "$(cat "$STUB_LOG")" "workspace create" "no duplicate workspace"
 
-# agent: existing workspace with a free pane -> start in that pane
+# agent: existing workspace -> new tab, leaving the terminal pane alone
 : > "$STUB_LOG"
 out=$(omagit-herdr agent "$R" "repo" claude)
 assert_contains "$(result_line "$out")" "OK" "agent start ok"
-assert_contains "$(cat "$STUB_LOG")" "agent start repo --kind claude --pane w1:p1" "started in free pane"
-# pane now busy -> new tab in same workspace
-cat > "$STUB_DIR/agents.json" <<JSON
-[{"agent":"claude","agent_status":"working","cwd":"$R","workspace_id":"w1","pane_id":"w1:p1"}]
-JSON
+assert_contains "$(cat "$STUB_LOG")" "tab create --workspace w1 --cwd $R" "agent opens a new tab"
+assert_contains "$(cat "$STUB_LOG")" "agent start repo --kind claude --pane w1:p2" "started in the new tab, not the terminal"
+# second click -> another tab, another agent
 : > "$STUB_LOG"
 out=$(omagit-herdr agent "$R" "repo" claude)
-assert_contains "$(cat "$STUB_LOG")" "tab create --workspace w1 --cwd $R" "new tab when pane busy"
-assert_contains "$(cat "$STUB_LOG")" "--pane w1:p2" "agent started in new tab pane"
+assert_contains "$(cat "$STUB_LOG")" "--pane w1:p3" "each click spawns another agent tab"
 # no workspace -> create, start in root pane
 : > "$STUB_LOG"
 out=$(omagit-herdr agent "$O" "other" claude)
