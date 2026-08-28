@@ -1,0 +1,2 @@
+#!/bin/bash
+printf 'xdg-open %s\n' "$*" >> "$STUB_LOG"

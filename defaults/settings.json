@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "launcher": "native",
+  "mergeStrategy": "squash",
+  "deleteBranchOnMerge": true,
+  "pruneGoneAfterMerge": true,
+  "branchPrefix": "work/",
+  "fallbackRefreshSeconds": 300,
+  "debounceMs": 500,
+  "scanDepth": 4,
+  "ignoreDirs": ["node_modules", ".venv", "venv", "dist", "build", "__pycache__", ".obsidian", "target"],
+  "openFileCommand": "xdg-open",
+  "ghPrLimit": 20
+}

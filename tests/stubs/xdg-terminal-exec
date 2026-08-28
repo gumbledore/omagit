@@ -1,0 +1,2 @@
+#!/bin/bash
+printf 'xdg-terminal-exec %s cwd=%s\n' "$*" "$PWD" >> "$STUB_LOG"

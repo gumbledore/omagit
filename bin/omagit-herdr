@@ -1,0 +1,92 @@
+#!/bin/bash
+# omagit-herdr: launcher = herdr. Workspaces are matched by pane cwd (then by
+# label) so a repo never gets a second workspace.
+#
+#   status                        STATUS<TAB>cwd<TAB>agent_status<TAB>workspace_id per agent
+#   terminal <repo> <label>       focus the repo's workspace, or create one
+#   agent <repo> <label> <kind>   same, then `herdr agent start` in a free pane
+
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
+ok() { tsv RESULT OK "$*"; exit 0; }
+err() { tsv RESULT ERR "$*"; exit 1; }
+
+hd() { with_timeout herdr "$@" 2>/dev/null; }
+server_up() { hd status server | grep -q 'status: running'; }
+
+# Workspace id owning a pane whose cwd is the repo; else one labeled <label>.
+find_workspace() {
+  local repo=$1 label=$2 id
+  id=$(hd pane list | jq -r --arg c "$repo" '[.result.panes[] | select(.cwd == $c or .foreground_cwd == $c)][0].workspace_id // empty')
+  [[ -n $id ]] || id=$(hd workspace list | jq -r --arg l "$label" '[.result.workspaces[] | select(.label == $l)][0].workspace_id // empty')
+  printf '%s' "$id"
+}
+
+# Pane in <ws> at cwd <repo> with no agent attached.
+free_pane() {
+  local ws=$1 repo=$2 busy
+  busy=$(hd agent list | jq -r '.result.agents[].pane_id')
+  hd pane list | jq -r --arg w "$ws" --arg c "$repo" --arg busy "$busy" '
+    ($busy | split("\n")) as $b
+    | [.result.panes[] | .pane_id as $p | select(.workspace_id == $w and (.cwd == $c or .foreground_cwd == $c) and (.agent == null) and (($b | index($p)) == null))][0].pane_id // empty'
+}
+
+create_workspace() { # prints "wsid<TAB>root pane"
+  local out
+  out=$(hd workspace create --cwd "$1" --label "$2" --focus) || return 1
+  jq -r '[(.result.workspace.workspace_id // .result.workspace.id // .result.workspace), (.result.root_pane.pane_id // .result.root_pane.id // .result.root_pane)] | @tsv' <<<"$out"
+}
+
+cmd_status() {
+  server_up || exit 0
+  hd agent list | jq -r '.result.agents[] | [.cwd, .agent_status, .workspace_id] | @tsv' 2>/dev/null \
+    | while IFS=$'\t' read -r cwd st ws; do tsv STATUS "$cwd" "$st" "$ws"; done
+}
+
+cmd_terminal() {
+  local repo=$1 label=$2 ws
+  server_up || err "herdr server is not running"
+  ws=$(find_workspace "$repo" "$label")
+  if [[ -n $ws ]]; then
+    hd workspace focus "$ws" >/dev/null || err "Could not focus herdr workspace $label"
+    ok "Focused herdr workspace $label"
+  fi
+  create_workspace "$repo" "$label" >/dev/null || err "Could not create herdr workspace $label"
+  ok "Created herdr workspace $label"
+}
+
+agent_name() {
+  local n; n=$(tr '[:upper:]' '[:lower:]' <<<"$1" | sed 's/[^a-z0-9_-]\+/-/g; s/^-*//; s/-*$//')
+  [[ $n =~ ^[a-z] ]] || n="repo-$n"
+  printf '%s' "${n:0:32}"
+}
+
+cmd_agent() {
+  local repo=$1 label=$2 kind=$3 ws pane created name out
+  server_up || err "herdr server is not running"
+  ws=$(find_workspace "$repo" "$label")
+  if [[ -z $ws ]]; then
+    created=$(create_workspace "$repo" "$label") || err "Could not create herdr workspace $label"
+    ws=${created%%$'\t'*}; pane=${created#*$'\t'}
+  else
+    hd workspace focus "$ws" >/dev/null
+    pane=$(free_pane "$ws" "$repo")
+    if [[ -z $pane ]]; then
+      out=$(hd tab create --workspace "$ws" --cwd "$repo" --focus) || err "Could not open a tab in herdr workspace $label"
+      pane=$(jq -r '.result.root_pane.pane_id // .result.root_pane.id // .result.root_pane' <<<"$out")
+    fi
+  fi
+  [[ -n $pane ]] || err "No pane available in herdr workspace $label"
+  name=$(agent_name "$label")
+  out=$(with_timeout herdr agent start "$name" --kind "$kind" --pane "$pane" 2>&1) \
+    || out=$(with_timeout herdr agent start "$name-$RANDOM" --kind "$kind" --pane "$pane" 2>&1) \
+    || err "Could not start $kind in herdr: ${out:0:200}"
+  ok "Started $kind in herdr workspace $label"
+}
+
+case "${1:-}" in
+  status) cmd_status ;;
+  terminal) cmd_terminal "${2:?repo}" "${3:-${2##*/}}" ;;
+  agent) cmd_agent "${2:?repo}" "${3:-${2##*/}}" "${4:?agent kind}" ;;
+  *) die "usage: omagit-herdr status|terminal <repo> <label>|agent <repo> <label> <kind>" ;;
+esac

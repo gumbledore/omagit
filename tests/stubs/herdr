@@ -1,0 +1,31 @@
+#!/bin/bash
+# herdr stub. State lives in $STUB_DIR: workspaces.json, panes.json, agents.json;
+# herdr-down makes every command fail like a stopped server.
+printf 'herdr %s\n' "$*" >> "$STUB_LOG"
+[[ -e $STUB_DIR/herdr-down ]] && { echo '{"error":"connection refused"}' >&2; exit 1; }
+ws="$STUB_DIR/workspaces.json"; panes="$STUB_DIR/panes.json"; agents="$STUB_DIR/agents.json"
+[[ -f $ws ]] || echo '[]' > "$ws"; [[ -f $panes ]] || echo '[]' > "$panes"; [[ -f $agents ]] || echo '[]' > "$agents"
+case "$1 $2" in
+  "status server") echo "status: running" ;;
+  "workspace list") jq -c '{id:"cli",result:{type:"workspace_list",workspaces:.}}' "$ws" ;;
+  "pane list") jq -c '{id:"cli",result:{type:"pane_list",panes:.}}' "$panes" ;;
+  "agent list") jq -c '{id:"cli",result:{type:"agent_list",agents:.}}' "$agents" ;;
+  "workspace focus") echo '{"id":"cli","result":{"ok":true}}' ;;
+  "workspace create")
+    shift 2; cwd=""; label=""
+    while (($#)); do case "$1" in --cwd) cwd=$2; shift 2 ;; --label) label=$2; shift 2 ;; *) shift ;; esac; done
+    n=$(( $(jq length "$ws") + 1 )); id="w$n"
+    jq -c --arg id "$id" --arg l "$label" '. + [{workspace_id:$id,label:$l,agent_status:"idle"}]' "$ws" > "$ws.t" && mv "$ws.t" "$ws"
+    jq -c --arg id "$id" --arg c "$cwd" '. + [{pane_id:($id+":p1"),workspace_id:$id,cwd:$c,agent_status:"unknown"}]' "$panes" > "$panes.t" && mv "$panes.t" "$panes"
+    printf '{"id":"cli","result":{"workspace":{"workspace_id":"%s"},"tab":{"tab_id":"%s:t1"},"root_pane":{"pane_id":"%s:p1"}}}\n' "$id" "$id" "$id" ;;
+  "tab create")
+    shift 2; wsid=""; cwd=""
+    while (($#)); do case "$1" in --workspace) wsid=$2; shift 2 ;; --cwd) cwd=$2; shift 2 ;; *) shift ;; esac; done
+    n=$(( $(jq --arg w "$wsid" '[.[] | select(.workspace_id==$w)] | length' "$panes") + 1 ))
+    jq -c --arg id "$wsid" --arg c "$cwd" --arg n "$n" '. + [{pane_id:($id+":p"+$n),workspace_id:$id,cwd:$c,agent_status:"unknown"}]' "$panes" > "$panes.t" && mv "$panes.t" "$panes"
+    printf '{"id":"cli","result":{"tab":{"tab_id":"%s:t%s"},"root_pane":{"pane_id":"%s:p%s"}}}\n' "$wsid" "$n" "$wsid" "$n" ;;
+  "agent start")
+    [[ -e $STUB_DIR/agent-start-fail ]] && { echo '{"error":"agent_not_ready"}' >&2; exit 1; }
+    echo '{"id":"cli","result":{"ok":true}}' ;;
+  *) echo "herdr stub: unhandled $*" >&2; exit 1 ;;
+esac

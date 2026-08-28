@@ -1,0 +1,303 @@
+#!/bin/bash
+# omagit-action <verb> <repo> [args...]
+#
+# Every verb streams captured command output as OUT<TAB>line records and ends
+# with RESULT<TAB>OK|ERR<TAB>message (exit 0/1). Exceptions: `diff` prints raw
+# text, `suggest`/`branches`/`agent-name` print their own records.
+#
+#   diff <repo>                       stat + per-file diff, untracked as "new file"
+#   suggest <repo>                    MSG<TAB>message / BRANCH<TAB>suggested target
+#   commit <repo> <msg> [<branch>]    add -A, commit, push -u; main rejection -> branch + PR
+#   new-branch <repo> <name>          switch -c
+#   switch <repo> <name>              switch
+#   branches <repo>                   BRANCH<TAB>name<TAB>current(0|1)
+#   create-pr <repo>                  refuse on main; push -u; gh pr create --web
+#   merge-pr <repo> <number>          gh pr merge (settings strategy), then ff-main, prune-gone
+#   ff-main <repo>                    pull --ff-only or fetch def:def; diverged -> ERR
+#   prune-gone <repo>                 fetch --prune, delete local branches whose upstream is gone
+#   open-file <repo> <file>           openFileCommand <abs path>
+#   open-terminal <repo> <label>      native or herdr per `launcher`
+#   launch-agent <repo> <label>       default agent per omarchy-default-agent
+#   agent-name                        print the default agent name (may be empty)
+
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
+emit_out() { local l; while IFS= read -r l; do [[ -n $l ]] && tsv OUT "$l"; done <<<"$1"; }
+run() { local out rc; out=$(with_timeout "$@" 2>&1); rc=$?; emit_out "$out"; return $rc; }
+ok() { tsv RESULT OK "$*"; exit 0; }
+err() { tsv RESULT ERR "$*"; exit 1; }
+
+has_remote() { [[ -n $(git -C "$1" remote 2>/dev/null) ]]; }
+is_github() { git -C "$1" config --get remote.origin.url 2>/dev/null | grep -q "github\.com"; }
+is_dirty() { [[ -n $(git -C "$1" status --porcelain --untracked-files=all 2>/dev/null) ]]; }
+has_head() { git -C "$1" rev-parse -q --verify HEAD >/dev/null 2>&1; }
+branch_exists() { git -C "$1" show-ref -q --verify "refs/heads/$2" 2>/dev/null; }
+remote_branch_exists() { git -C "$1" show-ref -q --verify "refs/remotes/origin/$2" 2>/dev/null; }
+
+# branchPrefix + ISO date, suffixed -2, -3… until unused locally and on origin.
+fresh_branch() {
+  local repo=$1 base name n=1
+  base="$(setting branchPrefix)$(date +%F)"
+  name=$base
+  while branch_exists "$repo" "$name" || remote_branch_exists "$repo" "$name"; do
+    n=$((n + 1)); name="$base-$n"
+  done
+  printf '%s\n' "$name"
+}
+
+open_url() {
+  [[ $1 =~ ^https?:// ]] || return 1
+  setsid -f xdg-open "$1" >/dev/null 2>&1
+}
+
+# ------------------------------------------------------------------ diff
+cmd_diff() {
+  local repo=$1 base f
+  if has_head "$repo"; then base=HEAD; else base=$(git -C "$repo" hash-object -t tree /dev/null); fi
+  git -C "$repo" -c color.ui=never diff --stat "$base" 2>/dev/null
+  while IFS= read -r f; do
+    [[ -n $f ]] && printf '%s | new file\n' "$f"
+  done < <(git -C "$repo" ls-files --others --exclude-standard)
+  echo
+  git -C "$repo" -c color.ui=never diff "$base" 2>/dev/null
+  while IFS= read -r f; do
+    [[ -n $f ]] || continue
+    printf 'new file: %s\n' "$f"
+    git -C "$repo" -c color.ui=never diff --no-index -- /dev/null "$f" 2>/dev/null | tail -n +6 || true
+  done < <(git -C "$repo" ls-files --others --exclude-standard)
+  return 0
+}
+
+# ------------------------------------------------------------------ suggest
+cmd_suggest() {
+  local repo=$1 cur msg branch n first verb dir
+  cur=$(current_branch "$repo")
+  mapfile -t files < <(git -C "$repo" status --porcelain --untracked-files=all 2>/dev/null)
+  n=${#files[@]}
+  if (( n == 0 )); then
+    msg=""
+  elif (( n == 1 )); then
+    first=${files[0]}
+    case "${first:0:2}" in
+      "A "|"??") verb=Add ;;
+      "D "|" D") verb=Remove ;;
+      "R "*) verb=Rename ;;
+      *) verb=Update ;;
+    esac
+    first=${first:3}; first=${first##* -> }
+    msg="$verb ${first##*/}"
+  else
+    dir=$(printf '%s\n' "${files[@]}" | cut -c4- | sed 's| -> .*||' | awk -F/ 'NF>1 {print $1; next} {print "."}' | sort -u)
+    if [[ $(wc -l <<<"$dir") -eq 1 && $dir != . ]]; then
+      msg="Update $dir ($n files)"
+    else
+      msg="Update $n files"
+    fi
+  fi
+  if [[ -z $cur ]] || is_main_branch "$cur"; then branch=$(fresh_branch "$repo"); else branch=$cur; fi
+  tsv MSG "$msg"
+  tsv BRANCH "$branch"
+  tsv CURRENT "$cur"
+}
+
+# ------------------------------------------------------------------ commit
+cmd_commit() {
+  local repo=$1 msg=$2 target=${3:-} cur nb url out push_out
+  [[ -n ${msg// /} ]] || err "Commit message is empty"
+  is_dirty "$repo" || err "Nothing to commit"
+  cur=$(current_branch "$repo")
+  [[ -n $cur ]] || err "HEAD is detached; check out a branch first"
+
+  if [[ -n $target && $target != "$cur" ]]; then
+    git check-ref-format --branch "$target" >/dev/null 2>&1 || err "Invalid branch name: $target"
+    if branch_exists "$repo" "$target"; then
+      run git -C "$repo" switch "$target" || err "Could not switch to $target"
+    else
+      run git -C "$repo" switch -c "$target" || err "Could not create $target"
+    fi
+    cur=$target
+  fi
+
+  run git -C "$repo" add -A || err "git add failed"
+  run git -C "$repo" commit -q -m "$msg" || err "Commit failed"
+  has_remote "$repo" || ok "Committed on $cur (no remote to push to)"
+
+  push_out=$(with_timeout git -C "$repo" push -u origin "$cur" 2>&1) && { emit_out "$push_out"; ok "Committed and pushed to $cur"; }
+  emit_out "$push_out"
+  is_main_branch "$cur" || err "Committed on $cur but push failed"
+  # Only a real rejection (protected branch / non-fast-forward) triggers the
+  # branch+PR fallback; network or auth failures leave the commit on main.
+  grep -qiE 'rejected|pre-receive|protected|GH006|hook declined' <<<"$push_out" \
+    || err "Committed on $cur but push failed (not a rejection; nothing moved)"
+
+  # Push to main rejected: move the commit to a fresh branch and open a PR.
+  nb=$(fresh_branch "$repo")
+  run git -C "$repo" branch "$nb" HEAD || err "Push to $cur rejected; could not create $nb"
+  if remote_branch_exists "$repo" "$cur"; then
+    run git -C "$repo" reset -q --hard "origin/$cur" || err "Push to $cur rejected; could not reset $cur"
+  else
+    run git -C "$repo" reset -q --hard HEAD~1 || err "Push to $cur rejected; could not reset $cur"
+  fi
+  run git -C "$repo" switch "$nb" || err "Push to $cur rejected; could not switch to $nb"
+  run git -C "$repo" push -u origin "$nb" || err "Push to $cur rejected and pushing $nb failed too; commit is on $nb"
+  if is_github "$repo"; then
+    out=$(cd "$repo" && with_timeout gh pr create --fill 2>&1); emit_out "$out"
+    url=$(grep -oE 'https?://[^ ]+' <<<"$out" | tail -n1)
+    [[ -n $url ]] && ok "Push to $cur rejected: moved to $nb and opened $url"
+    ok "Push to $cur rejected: moved to $nb and pushed (PR creation failed)"
+  fi
+  ok "Push to $cur rejected: moved to $nb and pushed"
+}
+
+# ------------------------------------------------------------------ branches
+cmd_new_branch() {
+  local repo=$1 name=$2
+  [[ -n $name ]] || err "Branch name is empty"
+  git check-ref-format --branch "$name" >/dev/null 2>&1 || err "Invalid branch name: $name"
+  run git -C "$repo" switch -c "$name" || err "Could not create $name"
+  ok "Created and switched to $name"
+}
+
+cmd_switch() {
+  local repo=$1 name=$2
+  [[ -n $name ]] || err "Branch name is empty"
+  run git -C "$repo" switch "$name" || err "Could not switch to $name"
+  ok "Switched to $name"
+}
+
+cmd_branches() {
+  local repo=$1 cur b
+  cur=$(current_branch "$repo")
+  while IFS= read -r b; do
+    [[ -n $b ]] || continue
+    tsv BRANCH "$b" "$([[ $b == "$cur" ]] && echo 1 || echo 0)"
+  done < <(git -C "$repo" for-each-ref --format='%(refname:short)' --sort=-committerdate refs/heads 2>/dev/null)
+}
+
+# ------------------------------------------------------------------ PRs
+cmd_create_pr() {
+  local repo=$1 cur url
+  cur=$(current_branch "$repo")
+  [[ -n $cur ]] || err "HEAD is detached; check out a branch first"
+  is_main_branch "$cur" && err "Refusing to create a PR from $cur; make a branch first"
+  has_remote "$repo" || err "No remote configured"
+  run git -C "$repo" push -u origin "$cur" || err "Push of $cur failed"
+  is_github "$repo" || ok "Pushed $cur (origin is not a GitHub remote, so no PR form)"
+  url=$(cd "$repo" && with_timeout gh pr view --json url -q .url 2>/dev/null || true)
+  if [[ -n $url ]]; then
+    open_url "$url"
+    ok "PR already exists for $cur: $url"
+  fi
+  (cd "$repo" && setsid -f gh pr create --web >/dev/null 2>&1)
+  ok "Pushed $cur; opening the PR form"
+}
+
+do_ff_main() { # sets FF_MSG; returns 1 on failure with FF_MSG set
+  local repo=$1 def cur
+  def=$(default_branch "$repo"); cur=$(current_branch "$repo")
+  has_remote "$repo" || { FF_MSG="No remote configured"; return 1; }
+  if [[ $cur == "$def" ]]; then
+    run git -C "$repo" pull -q --ff-only origin "$def" || { FF_MSG="$def has diverged from origin/$def; nothing changed"; return 1; }
+  else
+    run git -C "$repo" fetch -q origin "$def:$def" || { FF_MSG="$def has diverged from origin/$def; nothing changed"; return 1; }
+  fi
+  FF_MSG="$def fast-forwarded to $(git -C "$repo" rev-parse --short "$def" 2>/dev/null)"
+}
+
+do_prune_gone() { # sets PRUNE_MSG
+  local repo=$1 cur line name track pruned=()
+  cur=$(current_branch "$repo")
+  run git -C "$repo" fetch -q --prune origin || { PRUNE_MSG="fetch --prune failed"; return 1; }
+  while IFS=$'\t' read -r name track; do
+    [[ $track == "[gone]" && $name != "$cur" ]] || continue
+    if run git -C "$repo" branch -q -D "$name"; then pruned+=("$name"); fi
+  done < <(git -C "$repo" for-each-ref --format='%(refname:short)%09%(upstream:track)' refs/heads)
+  if (( ${#pruned[@]} )); then PRUNE_MSG="pruned ${pruned[*]}"; else PRUNE_MSG="no gone branches"; fi
+}
+
+cmd_ff_main() {
+  local repo=$1
+  do_ff_main "$repo" || err "$FF_MSG"
+  ok "$FF_MSG"
+}
+
+cmd_prune_gone() {
+  local repo=$1
+  do_prune_gone "$repo" || err "$PRUNE_MSG"
+  ok "${PRUNE_MSG^}"
+}
+
+cmd_merge_pr() {
+  local repo=$1 num=$2 strategy args=() msg
+  [[ $num =~ ^[0-9]+$ ]] || err "Invalid PR number"
+  is_github "$repo" || err "origin is not a GitHub remote"
+  strategy=$(setting mergeStrategy)
+  [[ $strategy =~ ^(squash|merge|rebase)$ ]] || strategy=squash
+  args=("--$strategy")
+  [[ $(setting deleteBranchOnMerge) == true ]] && args+=(--delete-branch)
+  ( cd "$repo" && run gh pr merge "$num" "${args[@]}" ) || err "Merge of #$num failed"
+  msg="Merged #$num"
+  do_ff_main "$repo"; msg+="; $FF_MSG"   # a diverged main is reported, not fatal
+  if [[ $(setting pruneGoneAfterMerge) == true ]]; then
+    do_prune_gone "$repo" && msg+="; $PRUNE_MSG"
+  fi
+  ok "$msg"
+}
+
+# ------------------------------------------------------------------ launchers
+cmd_open_file() {
+  local repo=$1 file=$2 abs cmd parts
+  abs=$(abspath "$repo/$file")
+  [[ $abs == "$repo"/* ]] || err "Refusing to open a path outside the repo"
+  cmd=$(setting openFileCommand)
+  read -ra parts <<<"$cmd"
+  (( ${#parts[@]} )) || err "openFileCommand is empty"
+  setsid -f "${parts[@]}" "$abs" >/dev/null 2>&1 || err "Could not run ${parts[0]}"
+  ok "Opened ${file##*/}"
+}
+
+cmd_open_terminal() {
+  local repo=$1 label=${2:-${1##*/}}
+  if [[ $(setting launcher) == herdr ]]; then
+    exec "$OMAGIT_PLUGIN_DIR/bin/omagit-herdr" terminal "$repo" "$label"
+  fi
+  setsid -f xdg-terminal-exec --dir="$repo" >/dev/null 2>&1 || err "Could not launch a terminal"
+  ok "Opened a terminal in $label"
+}
+
+cmd_launch_agent() {
+  local repo=$1 label=${2:-${1##*/}} agent
+  agent=$(omarchy-default-agent 2>/dev/null || true)
+  [[ -n $agent ]] || err "no default agent set (run: omarchy default agent <name>)"
+  if [[ $(setting launcher) == herdr ]]; then
+    exec "$OMAGIT_PLUGIN_DIR/bin/omagit-herdr" agent "$repo" "$label" "$agent"
+  fi
+  (cd "$repo" && setsid -f omarchy-agent >/dev/null 2>&1) || err "Could not launch $agent"
+  ok "Launched $agent in $label"
+}
+
+cmd_agent_name() { omarchy-default-agent 2>/dev/null || true; }
+
+verb=${1:-}; repo=${2:-}
+case "$verb" in
+  agent-name) cmd_agent_name; exit 0 ;;
+  "") die "usage: omagit-action <verb> <repo> [args]" ;;
+esac
+[[ -n $repo && -d $repo ]] || err "Repo not found: $repo"
+repo=$(abspath "$repo")
+case "$verb" in
+  diff) cmd_diff "$repo" ;;
+  suggest) cmd_suggest "$repo" ;;
+  commit) cmd_commit "$repo" "${3:-}" "${4:-}" ;;
+  new-branch) cmd_new_branch "$repo" "${3:-}" ;;
+  switch) cmd_switch "$repo" "${3:-}" ;;
+  branches) cmd_branches "$repo" ;;
+  create-pr) cmd_create_pr "$repo" ;;
+  merge-pr) cmd_merge_pr "$repo" "${3:-}" ;;
+  ff-main) cmd_ff_main "$repo" ;;
+  prune-gone) cmd_prune_gone "$repo" ;;
+  open-file) cmd_open_file "$repo" "${3:-}" ;;
+  open-terminal) cmd_open_terminal "$repo" "${3:-}" ;;
+  launch-agent) cmd_launch_agent "$repo" "${3:-}" ;;
+  *) err "Unknown action: $verb" ;;
+esac

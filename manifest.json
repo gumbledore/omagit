@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "omagit",
+  "name": "omagit",
+  "version": "1.0.0",
+  "author": "Kevin Goff",
+  "license": "MIT",
+  "description": "Multi-repo git dashboard for the Omarchy bar: tracked repos, live local state, fetch, quick commit, PR merge, fast-forward main, terminal and agent launchers.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "omagit",
+    "description": "Git status of every tracked repo, with housekeeping actions in a popup panel",
+    "category": "Development",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

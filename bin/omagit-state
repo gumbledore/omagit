@@ -1,0 +1,88 @@
+#!/bin/bash
+# omagit-state <repo>...: local snapshot per repo, no network.
+#
+#   REPO  path  branch  dirty  ahead  behind  upstream(yes|none|noremote)  age  subject
+#   FILE  path  status(M|A|D|R|C|U|?)  file
+#   ERR   path  message
+#   END   path
+#
+# Parses `git status --porcelain=v2 --branch`. Paths git quotes (tabs, quotes,
+# backslashes) are unquoted so the panel shows the real name.
+
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
+unquote() {
+  local p=$1
+  if [[ $p == \"*\" ]]; then
+    p=${p:1:-1}
+    p=${p//\\\"/\"}
+    printf '%b' "$p"
+  else
+    printf '%s' "$p"
+  fi
+}
+
+one_repo() {
+  local repo=$1 branch="" upstream="none" ahead=0 behind=0 dirty=0 age="" subject=""
+  local line xy status path rest files=()
+
+  if ! git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+    tsv ERR "$repo" "not a git repository"
+    return
+  fi
+
+  if [[ -z $(git -C "$repo" remote 2>/dev/null) ]]; then upstream="noremote"; fi
+
+  while IFS= read -r line; do
+    case "$line" in
+      "# branch.head "*)
+        branch=${line#\# branch.head }
+        ;;
+      "# branch.upstream "*) [[ $upstream == noremote ]] || upstream="yes" ;;
+      "# branch.ab "*)
+        rest=${line#\# branch.ab }
+        ahead=${rest%% *}; ahead=${ahead#+}
+        behind=${rest##* }; behind=${behind#-}
+        ;;
+      "#"*) ;;
+      "1 "*|"2 "*)
+        xy=${line:2:2}
+        status=${xy:1:1}; [[ $status == . ]] && status=${xy:0:1}
+        if [[ $line == "1 "* ]]; then
+          path=$(cut -d' ' -f9- <<<"$line")
+        else
+          path=$(cut -d' ' -f10- <<<"$line"); path=${path%%$'\t'*}
+        fi
+        files+=("$status"$'\t'"$(unquote "$path")")
+        ;;
+      "u "*)
+        path=$(cut -d' ' -f11- <<<"$line")
+        files+=("U"$'\t'"$(unquote "$path")")
+        ;;
+      "? "*)
+        files+=("?"$'\t'"$(unquote "${line:2}")")
+        ;;
+    esac
+  done < <(git -C "$repo" status --porcelain=v2 --branch --untracked-files=all 2>/dev/null)
+
+  if [[ $branch == "(detached)" ]]; then
+    branch="detached @ $(git -C "$repo" rev-parse --short HEAD 2>/dev/null)"
+  fi
+  dirty=${#files[@]}
+
+  if git -C "$repo" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+    IFS=$'\t' read -r age subject < <(git -C "$repo" log -1 --format='%cr%x09%s' 2>/dev/null)
+  fi
+
+  tsv REPO "$repo" "$branch" "$dirty" "$ahead" "$behind" "$upstream" "$age" "$subject"
+  local f
+  for f in "${files[@]}"; do
+    tsv FILE "$repo" "${f%%$'\t'*}" "${f#*$'\t'}"
+  done
+}
+
+[[ $# -gt 0 ]] || die "usage: omagit-state <repo>..."
+for r in "$@"; do
+  one_repo "$r"
+  tsv END "$r"
+done

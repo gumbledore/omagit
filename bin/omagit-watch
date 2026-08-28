@@ -1,0 +1,34 @@
+#!/bin/bash
+# omagit-watch <repo>...: one long-lived inotify watch over every tracked repo.
+# Prints the owning repo path once per filesystem event; the panel debounces.
+#
+# ignoreDirs, .git/objects and .git/logs are excluded (bulk churn with no
+# state change); .git/HEAD, .git/index and .git/refs stay watched so commits,
+# checkouts and stages from any terminal show up. Symlinks are never followed.
+
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
+[[ $# -gt 0 ]] || die "usage: omagit-watch <repo>..."
+
+ignore=$(setting ignoreDirs | jq -r '.[]' | sed 's/[.[\*^$+?(){}|\\]/\\&/g' | paste -sd'|')
+exclude="/(${ignore:-node_modules})/|/\\.git/(objects|logs|lfs)/|\\.lock\$|/\\.git/index\\.lock"
+
+# Longest repo path first so nested repos win the prefix match.
+mapfile -t repos < <(printf '%s\n' "$@" | awk '{ print length, $0 }' | sort -rn | cut -d' ' -f2-)
+
+exec 3< <(inotifywait -m -r -P --exclude "$exclude" \
+  -e modify -e create -e delete -e move -e close_write \
+  --format '%w%f' "$@" 2>&2)
+ipid=$!
+trap 'kill "$ipid" 2>/dev/null' EXIT TERM INT HUP
+# Shell restarts can kill this script uncatchably; a sidecar reaps inotifywait then.
+( while kill -0 "$$" 2>/dev/null; do sleep 5; done; kill "$ipid" 2>/dev/null ) &
+
+while IFS= read -r -u 3 path; do
+  for r in "${repos[@]}"; do
+    if [[ $path == "$r" || $path == "$r"/* ]]; then
+      printf '%s\n' "$r"
+      break
+    fi
+  done
+done

@@ -1,0 +1,3 @@
+#!/bin/bash
+[[ -f $HOME/.config/omarchy/defaults/agent ]] && cat "$HOME/.config/omarchy/defaults/agent"
+exit 0

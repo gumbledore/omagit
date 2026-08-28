@@ -1,0 +1,2 @@
+#!/bin/bash
+printf 'zeditor %s\n' "$*" >> "$STUB_LOG"

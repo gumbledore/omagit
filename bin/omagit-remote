@@ -1,0 +1,60 @@
+#!/bin/bash
+# omagit-remote <repo>...: fetch + open-PR lookup, three repos at a time.
+# Only runs when the user asks (Fetch all / per-repo fetch); nothing here is
+# ever scheduled.
+#
+#   FETCH  repo  OK|ERR|SKIP  message
+#   PR     repo  number  title  url  ci(passing|failing|pending|none)  head
+#   PRS    repo  OK|ERR|SKIP  message
+#   DONE   repo
+
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
+ROLLUP='
+  def ci: (.statusCheckRollup // []) as $c
+    | if ($c | length) == 0 then "none"
+      elif any($c[]; ((.conclusion // .state // "") | ascii_upcase) | test("FAILURE|ERROR|TIMED_OUT|CANCELLED|ACTION_REQUIRED|STARTUP_FAILURE")) then "failing"
+      elif any($c[]; (((.status // "") | ascii_upcase) | test("IN_PROGRESS|QUEUED|PENDING|WAITING|REQUESTED"))
+                   or (((.state // "") | ascii_upcase) | test("PENDING|EXPECTED"))) then "pending"
+      else "passing" end;
+  .[] | [.number, .title, .url, ci, .headRefName] | @tsv'
+
+one_repo() {
+  local repo=$1 out rc line
+  if [[ -z $(git -C "$repo" remote 2>/dev/null) ]]; then
+    tsv FETCH "$repo" SKIP "no remote"
+    tsv PRS "$repo" SKIP "no remote"
+    tsv DONE "$repo"
+    return
+  fi
+  out=$(with_timeout git -C "$repo" fetch -q --prune origin 2>&1); rc=$?
+  if (( rc == 0 )); then tsv FETCH "$repo" OK "fetched"; else tsv FETCH "$repo" ERR "${out:-fetch failed (exit $rc)}"; fi
+
+  if ! git -C "$repo" config --get remote.origin.url 2>/dev/null | grep -q "github\.com"; then
+    tsv PRS "$repo" SKIP "not a GitHub remote"
+    tsv DONE "$repo"
+    return
+  fi
+  out=$(cd "$repo" && with_timeout gh pr list --state open --limit "$(setting ghPrLimit)" \
+        --json number,title,url,headRefName,statusCheckRollup 2>&1); rc=$?
+  if (( rc != 0 )); then
+    tsv PRS "$repo" ERR "${out:-gh failed (exit $rc)}"
+    tsv DONE "$repo"
+    return
+  fi
+  if ! rows=$(jq -r "$ROLLUP" <<<"$out" 2>/dev/null); then
+    tsv PRS "$repo" ERR "could not parse gh output"
+    tsv DONE "$repo"
+    return
+  fi
+  while IFS=$'\t' read -r num title url ci head; do
+    [[ -n $num ]] || continue
+    tsv PR "$repo" "$num" "${title//\\t/ }" "$url" "$ci" "$head"
+  done <<<"$rows"
+  tsv PRS "$repo" OK "$(grep -c . <<<"$rows") open"
+  tsv DONE "$repo"
+}
+
+if [[ ${1:-} == --one ]]; then one_repo "$2"; exit 0; fi
+[[ $# -gt 0 ]] || die "usage: omagit-remote <repo>..."
+printf '%s\0' "$@" | xargs -0 -P 3 -n 1 "$(realpath -- "${BASH_SOURCE[0]}")" --one

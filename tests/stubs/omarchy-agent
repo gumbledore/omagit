@@ -1,0 +1,2 @@
+#!/bin/bash
+printf 'omarchy-agent %s cwd=%s\n' "$*" "$PWD" >> "$STUB_LOG"

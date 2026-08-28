@@ -1,0 +1,134 @@
+#!/bin/bash
+# omagit-config: settings bootstrap/merge, tracking file, repo discovery.
+#
+#   settings                 create settings.json from defaults / merge missing keys; print JSON
+#   tracking                 print tracking JSON (empty shape if the file does not exist)
+#   add-root <dir>           track every repo found under <dir>
+#   add-repo <dir>           track one repo
+#   untrack <repo>           explicit repo -> removed; discovered repo -> excluded
+#   untrack-root <dir>       stop tracking a root and everything under it
+#   discover                 TSV: path<TAB>label<TAB>root<TAB>kind(root|repo)
+#
+# Nothing here touches anything outside ~/.config/omagit.
+
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
+write_json() { # file json
+  mkdir -p "$(dirname -- "$1")"
+  printf '%s\n' "$2" > "$1.tmp" && mv -f "$1.tmp" "$1"
+}
+
+cmd_settings() {
+  local defaults user merged
+  defaults=$(cat "$OMAGIT_DEFAULTS")
+  if [[ -f $OMAGIT_SETTINGS ]]; then
+    if ! user=$(jq -c . "$OMAGIT_SETTINGS" 2>/dev/null); then
+      echo "omagit: settings.json is not valid JSON, using defaults until it is fixed" >&2
+      printf '%s\n' "$defaults"
+      return 0
+    fi
+    # defaults first so user values win; schemaVersion always tracks the shipped one
+    merged=$(jq -c -s '.[0] * .[1] | .schemaVersion = .[0].schemaVersion' <<<"$defaults"$'\n'"$user" 2>/dev/null) \
+      || merged=$(jq -c -s --argjson v "$(jq .schemaVersion <<<"$defaults")" '.[0] * .[1] | .schemaVersion = $v' <<<"$defaults"$'\n'"$user")
+    if [[ $(jq -c . <<<"$merged") != "$(jq -c . <<<"$user")" ]]; then
+      write_json "$OMAGIT_SETTINGS" "$(jq . <<<"$merged")"
+    fi
+    jq . <<<"$merged"
+  else
+    write_json "$OMAGIT_SETTINGS" "$(jq . <<<"$defaults")"
+    jq . <<<"$defaults"
+  fi
+}
+
+read_tracking() {
+  if [[ -f $OMAGIT_TRACKING ]] && jq -e . "$OMAGIT_TRACKING" >/dev/null 2>&1; then
+    jq -c '{roots: (.roots // []), repos: (.repos // []), excluded: (.excluded // [])}' "$OMAGIT_TRACKING"
+  else
+    echo '{"roots":[],"repos":[],"excluded":[]}'
+  fi
+}
+
+save_tracking() { write_json "$OMAGIT_TRACKING" "$(jq . <<<"$1")"; }
+
+cmd_tracking() { read_tracking | jq .; }
+
+is_repo() { [[ -e $1/.git ]]; }
+
+cmd_add_root() {
+  local dir; dir=$(abspath "${1:?add-root needs a directory}")
+  [[ -d $dir ]] || die "not a directory: $dir"
+  save_tracking "$(read_tracking | jq -c --arg p "$dir" '.roots = (.roots + [$p] | unique)')"
+  echo "tracking root $dir"
+}
+
+cmd_add_repo() {
+  local dir; dir=$(abspath "${1:?add-repo needs a directory}")
+  [[ -d $dir ]] || die "not a directory: $dir"
+  is_repo "$dir" || die "not a git repo: $dir"
+  save_tracking "$(read_tracking | jq -c --arg p "$dir" '.repos = (.repos + [$p] | unique) | .excluded = (.excluded - [$p])')"
+  echo "tracking repo $dir"
+}
+
+cmd_untrack() {
+  local dir t; dir=$(abspath "${1:?untrack needs a path}")
+  t=$(read_tracking)
+  if jq -e --arg p "$dir" '.repos | index($p)' <<<"$t" >/dev/null; then
+    save_tracking "$(jq -c --arg p "$dir" '.repos = (.repos - [$p])' <<<"$t")"
+  else
+    save_tracking "$(jq -c --arg p "$dir" '.excluded = (.excluded + [$p] | unique)' <<<"$t")"
+  fi
+  echo "untracked $dir"
+}
+
+cmd_untrack_root() {
+  local dir; dir=$(abspath "${1:?untrack-root needs a path}")
+  save_tracking "$(read_tracking | jq -c --arg p "$dir" '.roots = (.roots - [$p]) | .excluded = [.excluded[] | select(startswith($p + "/") | not)]')"
+  echo "untracked root $dir"
+}
+
+# Recursive scan: stop at the first .git, never follow symlinks, skip
+# dotfolders and ignoreDirs, honor scanDepth.
+scan_root() {
+  local root=$1 depth=$2 dir=$3 level=$4 entry name
+  if is_repo "$dir"; then
+    tsv "$dir" "${dir#"$root"/}" "$root" root
+    return
+  fi
+  (( level >= depth )) && return
+  for entry in "$dir"/*/; do
+    entry=${entry%/}
+    [[ -d $entry && ! -L $entry ]] || continue
+    name=${entry##*/}
+    [[ $name == .* ]] && continue
+    [[ " $IGNORE " == *" $name "* ]] && continue
+    scan_root "$root" "$depth" "$entry" $((level + 1))
+  done
+}
+
+cmd_discover() {
+  local t depth root repo
+  t=$(read_tracking)
+  depth=$(setting scanDepth)
+  IGNORE=$(setting ignoreDirs | jq -r '.[]' | tr '\n' ' ')
+  {
+    while IFS= read -r root; do
+      [[ -n $root && -d $root ]] || continue
+      scan_root "$root" "$depth" "$root" 0
+    done < <(jq -r '.roots[]' <<<"$t")
+    while IFS= read -r repo; do
+      [[ -n $repo && -d $repo ]] || continue
+      tsv "$repo" "${repo##*/}" "" repo
+    done < <(jq -r '.repos[]' <<<"$t")
+  } | sort -t$'\t' -k1,1 -u | grep -v -F -f <(jq -r '.excluded[] | . + "\t"' <<<"$t"; echo $'\x01') || true
+}
+
+case "${1:-}" in
+  settings) cmd_settings ;;
+  tracking) cmd_tracking ;;
+  add-root) cmd_add_root "${2:-}" ;;
+  add-repo) cmd_add_repo "${2:-}" ;;
+  untrack) cmd_untrack "${2:-}" ;;
+  untrack-root) cmd_untrack_root "${2:-}" ;;
+  discover) cmd_discover ;;
+  *) die "usage: omagit-config settings|tracking|add-root|add-repo|untrack|untrack-root|discover" ;;
+esac

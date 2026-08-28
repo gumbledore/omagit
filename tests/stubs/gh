@@ -1,0 +1,47 @@
+#!/bin/bash
+# gh stub: logs every call to $STUB_LOG; behavior driven by files in $STUB_DIR.
+#   prs.json      JSON array returned by `gh pr list --json`
+#   gh-fail       if present, every command fails with exit 1
+#   merge-fail    if present, `gh pr merge` fails
+# `gh pr merge` performs a real merge in the bare origin so ff/prune have
+# something to act on.
+printf 'gh %s\n' "$*" >> "$STUB_LOG"
+[[ -e $STUB_DIR/gh-fail ]] && { echo "gh: authentication required" >&2; exit 1; }
+case "$1 $2" in
+  "pr list")
+    cat "$STUB_DIR/prs.json" 2>/dev/null || echo "[]" ;;
+  "pr view")
+    branch=$(git symbolic-ref --short -q HEAD)
+    url=$(jq -r --arg b "$branch" '.[] | select(.headRefName == $b) | .url' "$STUB_DIR/prs.json" 2>/dev/null | head -n1)
+    [[ -n $url ]] || { echo "no pull requests found for branch \"$branch\"" >&2; exit 1; }
+    printf '{"url":"%s"}\n' "$url" ;;
+  "pr create")
+    echo "https://github.com/example/repo/pull/42" ;;
+  "pr merge")
+    [[ -e $STUB_DIR/merge-fail ]] && { echo "GraphQL: Pull request is not mergeable" >&2; exit 1; }
+    num=$3; shift 3
+    strategy=""; delete=0
+    for a in "$@"; do case "$a" in --squash|--merge|--rebase) strategy=${a#--} ;; --delete-branch) delete=1 ;; esac; done
+    head=$(jq -r --argjson n "$num" '.[] | select(.number == $n) | .headRefName' "$STUB_DIR/prs.json")
+    origin=$(git remote get-url origin)
+    scratch=$(mktemp -d)
+    git clone -q "$origin" "$scratch/w"
+    def=$(git -C "$scratch/w" symbolic-ref --short HEAD)
+    if [[ $strategy == squash ]]; then
+      git -C "$scratch/w" merge -q --squash "origin/$head" && git -C "$scratch/w" commit -qm "Squash #$num ($head)"
+    elif [[ $strategy == rebase ]]; then
+      git -C "$scratch/w" merge -q --ff-only "origin/$head"
+    else
+      git -C "$scratch/w" merge -q --no-ff -m "Merge #$num ($head)" "origin/$head"
+    fi
+    git -C "$scratch/w" push -q origin "$def"
+    if (( delete )); then
+      git -C "$scratch/w" push -q origin --delete "$head"
+      if [[ $(git symbolic-ref --short -q HEAD) == "$head" ]]; then
+        git switch -q "$def" 2>/dev/null; git branch -q -D "$head" 2>/dev/null
+      fi
+    fi
+    rm -rf "$scratch"
+    echo "✓ ${strategy} merged pull request #$num" ;;
+  *) echo "gh stub: unhandled $*" >&2; exit 1 ;;
+esac
