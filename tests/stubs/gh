@@ -3,6 +3,7 @@
 #   prs.json      JSON array returned by `gh pr list --json`
 #   gh-fail       if present, every command fails with exit 1
 #   merge-fail    if present, `gh pr merge` fails
+#   pr-N-open     if present, `gh pr view N --json state` reports OPEN (else MERGED)
 # `gh pr merge` performs a real merge in the bare origin so ff/prune have
 # something to act on.
 printf 'gh %s\n' "$*" >> "$STUB_LOG"
@@ -11,6 +12,15 @@ case "$1 $2" in
   "pr list")
     cat "$STUB_DIR/prs.json" 2>/dev/null || echo "[]" ;;
   "pr view")
+    if [[ $3 =~ ^[0-9]+$ ]]; then   # gh pr view N --json f -q .f
+      num=$3; shift 3; fields=""; q=""
+      while (($#)); do case "$1" in --json) fields=$2; shift 2 ;; -q) q=$2; shift 2 ;; *) shift ;; esac; done
+      state=MERGED; [[ -e $STUB_DIR/pr-$num-open ]] && state=OPEN
+      jq -c --argjson n "$num" --arg s "$state" --arg f "$fields" \
+        '.[] | select(.number == $n) | {headRefName, state: $s} | with_entries(select(.key | IN($f | split(",")[])))' \
+        "$STUB_DIR/prs.json" | { [[ -n $q ]] && jq -r "$q" || cat; }
+      exit 0
+    fi
     branch=$(git symbolic-ref --short -q HEAD)
     url=$(jq -r --arg b "$branch" '.[] | select(.headRefName == $b) | .url' "$STUB_DIR/prs.json" 2>/dev/null | head -n1)
     [[ -n $url ]] || { echo "no pull requests found for branch \"$branch\"" >&2; exit 1; }

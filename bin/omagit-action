@@ -205,14 +205,28 @@ do_ff_main() { # sets FF_MSG; returns 1 on failure with FF_MSG set
 }
 
 do_prune_gone() { # sets PRUNE_MSG
-  local repo=$1 cur line name track pruned=()
+  local repo=$1 cur line name track path wt pruned=() kept=()
+  declare -A wt_of=()
   cur=$(current_branch "$repo")
   run git -C "$repo" fetch -q --prune origin || { PRUNE_MSG="fetch --prune failed"; return 1; }
+  # branch -> worktree path (main worktree included; it is skipped below via $cur)
+  while IFS= read -r line; do
+    case $line in
+      "worktree "*) path=${line#worktree } ;;
+      "branch refs/heads/"*) wt_of[${line#branch refs/heads/}]=$path ;;
+    esac
+  done < <(git -C "$repo" worktree list --porcelain 2>/dev/null)
   while IFS=$'\t' read -r name track; do
     [[ $track == "[gone]" && $name != "$cur" ]] || continue
+    wt=${wt_of[$name]:-}
+    if [[ -n $wt ]] && ! run git -C "$repo" worktree remove "$wt"; then
+      kept+=("$name (dirty worktree ${wt##*/})"); continue   # no --force: a dirty worktree is kept and reported
+    fi
     if run git -C "$repo" branch -q -D "$name"; then pruned+=("$name"); fi
   done < <(git -C "$repo" for-each-ref --format='%(refname:short)%09%(upstream:track)' refs/heads)
   if (( ${#pruned[@]} )); then PRUNE_MSG="pruned ${pruned[*]}"; else PRUNE_MSG="no gone branches"; fi
+  (( ${#kept[@]} )) && PRUNE_MSG+="; kept ${kept[*]}"
+  return 0
 }
 
 cmd_ff_main() {
@@ -228,15 +242,24 @@ cmd_prune_gone() {
 }
 
 cmd_merge_pr() {
-  local repo=$1 num=$2 strategy args=() msg
+  local repo=$1 num=$2 strategy head msg
   [[ $num =~ ^[0-9]+$ ]] || err "Invalid PR number"
   is_github "$repo" || err "origin is not a GitHub remote"
   strategy=$(setting mergeStrategy)
   [[ $strategy =~ ^(squash|merge|rebase)$ ]] || strategy=squash
-  args=("--$strategy")
-  [[ $(setting deleteBranchOnMerge) == true ]] && args+=(--delete-branch)
-  ( cd "$repo" && run gh pr merge "$num" "${args[@]}" ) || err "Merge of #$num failed"
+  # No --delete-branch: gh would also delete the local branch and fail (e.g. checked
+  # out in a worktree) after the merge succeeded. Remote deletion is done here so the
+  # branch shows [gone]; local deletion belongs to do_prune_gone.
+  if ! ( cd "$repo" && run gh pr merge "$num" "--$strategy" ); then
+    [[ $(cd "$repo" && gh pr view "$num" --json state -q .state 2>/dev/null) == MERGED ]] || err "Merge of #$num failed"
+  fi
   msg="Merged #$num"
+  if [[ $(setting deleteBranchOnMerge) == true ]]; then
+    head=$(cd "$repo" && gh pr view "$num" --json headRefName -q .headRefName 2>/dev/null)
+    if [[ -n $head ]] && git -C "$repo" ls-remote --exit-code --heads origin "$head" >/dev/null 2>&1; then
+      run git -C "$repo" push -q origin --delete "$head" || msg+="; could not delete origin/$head"
+    fi
+  fi
   do_ff_main "$repo"; msg+="; $FF_MSG"   # a diverged main is reported, not fatal
   if [[ $(setting pruneGoneAfterMerge) == true ]]; then
     do_prune_gone "$repo" && msg+="; $PRUNE_MSG"

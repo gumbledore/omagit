@@ -97,8 +97,8 @@ live. There are no option menus in the panel.
 | `schemaVersion` | `1` | Managed by the plugin |
 | `launcher` | `"native"` | `"native"` (`xdg-terminal-exec`, `omarchy-agent`) or `"herdr"` (one workspace per repo — Terminal focuses it, each agent click opens a new tab; agent-status dot on rows) |
 | `mergeStrategy` | `"squash"` | `squash` \| `merge` \| `rebase` |
-| `deleteBranchOnMerge` | `true` | Pass `--delete-branch` to `gh pr merge` |
-| `pruneGoneAfterMerge` | `true` | Delete local branches whose upstream is gone after a merge |
+| `deleteBranchOnMerge` | `true` | Delete the PR's remote branch after merging (local copy is removed by prune) |
+| `pruneGoneAfterMerge` | `true` | Delete local branches whose upstream is gone after a merge (a clean worktree on that branch is removed first; a dirty one is kept and reported) |
 | `branchPrefix` | `"work/"` | Prefix for suggested branches (`work/2026-08-28`) |
 | `fallbackRefreshSeconds` | `300` | Full re-read + root re-scan + watcher restart interval |
 | `debounceMs` | `500` | Per-repo debounce for filesystem events |

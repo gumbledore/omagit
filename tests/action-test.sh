@@ -169,7 +169,9 @@ out=$(omagit-action merge-pr "$R" 7)
 res=$(result_line "$out")
 assert_contains "$res" "OK" "merge ok"
 assert_contains "$res" "#7" "merged number reported"
-assert_contains "$(cat "$STUB_LOG")" "gh pr merge 7 --squash --delete-branch" "strategy and delete flags"
+assert_contains "$(cat "$STUB_LOG")" "gh pr merge 7 --squash" "strategy flag"
+assert_not_contains "$(cat "$STUB_LOG")" "--delete-branch" "gh never deletes the local branch"
+assert_eq "" "$(git -C "$ORIGIN" branch --list work/x)" "remote branch deleted by action"
 assert_eq "$(git -C "$ORIGIN" rev-parse main)" "$(git -C "$R" rev-parse main)" "main fast-forwarded after merge"
 assert_eq "" "$(git -C "$R" branch --list work/x)" "local branch pruned after merge"
 jq '.mergeStrategy = "rebase"' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s" && mv "$TMP/s" "$OMAGIT_CONFIG_DIR/settings.json"
@@ -184,10 +186,29 @@ res=$(result_line "$(omagit-action merge-pr "$R" 10)")
 assert_contains "$res" "OK" "merge with diverged main still OK"
 assert_contains "$res" "diverged" "diverged main reported after merge"
 git -C "$R" reset -q --hard origin/main
-touch "$STUB_DIR/merge-fail"
+printf '[{"number":9,"title":"w","url":"u","headRefName":"work/w","statusCheckRollup":[]}]' > "$STUB_DIR/prs.json"
+touch "$STUB_DIR/merge-fail" "$STUB_DIR/pr-9-open"
 res=$(result_line "$(omagit-action merge-pr "$R" 9 || true)")
-assert_contains "$res" "ERR" "merge failure reported"
+assert_contains "$res" "ERR" "merge failure reported when PR still open"
+rm "$STUB_DIR/pr-9-open"
+res=$(result_line "$(omagit-action merge-pr "$R" 9 || true)")
+assert_contains "$res" "OK" "gh exit 1 but PR MERGED is not a failure"
 rm "$STUB_DIR/merge-fail"
+
+# --- prune-gone with worktrees: clean removed, dirty kept ---------------------------
+for b in work/wt-clean work/wt-dirty; do
+  git -C "$R" branch -q "$b" main; git -C "$R" push -q -u origin "$b"
+  git -C "$R" worktree add -q "$TMP/${b##*/}" "$b"
+  git -C "$R" push -q origin --delete "$b"
+done
+printf 'dirty\n' > "$TMP/wt-dirty/dirty.txt"
+res=$(result_line "$(omagit-action prune-gone "$R")")
+assert_contains "$res" "Pruned work/wt-clean" "clean worktree branch pruned"
+assert_no_file "$TMP/wt-clean" "clean worktree removed"
+assert_contains "$res" "kept work/wt-dirty (dirty worktree wt-dirty)" "dirty worktree reported"
+assert_file "$TMP/wt-dirty/dirty.txt" "dirty worktree kept"
+assert_contains "$(git -C "$R" branch --list work/wt-dirty)" "work/wt-dirty" "dirty worktree branch kept"
+git -C "$R" worktree remove --force "$TMP/wt-dirty"; git -C "$R" branch -q -D work/wt-dirty
 
 # --- open-file with configured command ----------------------------------------------
 omagit-action open-file "$R" "README.md" >/dev/null
