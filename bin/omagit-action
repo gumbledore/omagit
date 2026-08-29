@@ -242,7 +242,7 @@ cmd_prune_gone() {
 }
 
 cmd_merge_pr() {
-  local repo=$1 num=$2 strategy head msg
+  local repo=$1 num=$2 strategy head def msg
   [[ $num =~ ^[0-9]+$ ]] || err "Invalid PR number"
   [[ $(setting allowMerge) != false ]] || err "Merging from omagit is disabled (allowMerge)"
   is_github "$repo" || err "origin is not a GitHub remote"
@@ -255,10 +255,20 @@ cmd_merge_pr() {
     [[ $(cd "$repo" && gh pr view "$num" --json state -q .state 2>/dev/null) == MERGED ]] || err "Merge of #$num failed"
   fi
   msg="Merged #$num"
+  head=$(cd "$repo" && gh pr view "$num" --json headRefName -q .headRefName 2>/dev/null)
   if [[ $(setting deleteBranchOnMerge) == true ]]; then
-    head=$(cd "$repo" && gh pr view "$num" --json headRefName -q .headRefName 2>/dev/null)
     if [[ -n $head ]] && git -C "$repo" ls-remote --exit-code --heads origin "$head" >/dev/null 2>&1; then
       run git -C "$repo" push -q origin --delete "$head" || msg+="; could not delete origin/$head"
+    fi
+  fi
+  # Checked out on the merged branch: switch to the default branch so ff/prune
+  # finish the job in this pass; a dirty worktree stays put and is reported.
+  def=$(default_branch "$repo")
+  if [[ -n $head && $(current_branch "$repo") == "$head" && $head != "$def" ]]; then
+    if [[ -z $(git -C "$repo" status --porcelain 2>/dev/null) ]] && run git -C "$repo" switch -q "$def"; then
+      msg+="; switched to $def"
+    else
+      msg+="; still on $head (uncommitted changes)"
     fi
   fi
   do_ff_main "$repo"; msg+="; $FF_MSG"   # a diverged main is reported, not fatal
