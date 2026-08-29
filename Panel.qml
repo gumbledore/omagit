@@ -504,7 +504,7 @@ Panel {
           TextField {
             id: addField
             Layout.fillWidth: true
-            placeholderText: "~/Nucleus or ~/Work/foo"
+            placeholderText: "~/projects or ~/Work/foo"
             font.family: root.fontFamily
             onAccepted: { root.trackPath("root", text); text = "" }
           }

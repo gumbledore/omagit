@@ -20,8 +20,8 @@ Or by hand: clone anywhere and symlink it in (this is also the dev setup —
 edits are picked up by the shell):
 
 ```bash
-git clone https://github.com/gumbledore/omagit.git ~/Nucleus/local-apps/omagit
-ln -sfn ~/Nucleus/local-apps/omagit ~/.config/omarchy/plugins/gumbledore.omagit
+git clone https://github.com/gumbledore/omagit.git ~/projects/omagit
+ln -sfn ~/projects/omagit ~/.config/omarchy/plugins/gumbledore.omagit
 omarchy plugin enable gumbledore.omagit right
 ```
 
@@ -53,7 +53,7 @@ IPC target `omagit` also accepts `open`, `close`, `refresh`, and
   the repo count, attention count, and "fetched N min ago".
 - **Rows** — `label  branch  ●dirty  ↑ahead↓behind  PR n  age  ×`. Repos found
   under a root are labeled by their path relative to it
-  (`data-analysis/Neuronchat`); explicit repos by basename. Rows needing
+  (`tools/my-repo`); explicit repos by basename. Rows needing
   attention are tinted. Repos without an upstream or remote say so instead of
   erroring. **×** untracks (explicit repo → removed; discovered repo → added
   to `excluded`; nothing on disk changes).
@@ -115,8 +115,8 @@ Tracking lives in `~/.config/gumbledore.omagit/tracking.json` (`roots`, `repos`,
 - **gh credential helper pin.** `gh auth setup-git` writes the helper path with
   the exact mise-installed `gh` version. After a `gh` upgrade, non-TTY pushes
   fail until you rerun `gh auth setup-git`. omagit shows this as a push error.
-- `Claude-sync` under `~/Nucleus` is a real repo and will be discovered; untrack
-  it (×) if you do not want it listed.
+- Any git repo under a root is discovered, including tooling/config repos you
+  may not care about; untrack them (×) if you do not want them listed.
 - Zed's binary on Omarchy is `zeditor`; use that as `openFileCommand`.
 - Repos whose `origin` is not on github.com skip the PR lookup silently.
 

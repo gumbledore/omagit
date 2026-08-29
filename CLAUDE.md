@@ -1,7 +1,7 @@
 # omagit
 
-Omarchy shell plugin (bar widget + popup) that tracks many git repos — the Nucleus
-pseudo-monorepo plus any other paths — and exposes housekeeping actions from the bar.
+Omarchy shell plugin (bar widget + popup) that tracks many git repos — a root
+directory of projects plus any other explicit paths — and exposes housekeeping actions from the bar.
 
 ## Key directories
 

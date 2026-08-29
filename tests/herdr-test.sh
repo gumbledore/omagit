@@ -40,8 +40,8 @@ assert_contains "$(cat "$STUB_LOG")" "workspace create --cwd $O" "workspace crea
 assert_contains "$(cat "$STUB_LOG")" "--pane w2:p1" "agent started in root pane"
 # label sanitized into a valid agent name
 : > "$STUB_LOG"
-omagit-herdr agent "$O" "Data Analysis/Neuronchat" claude >/dev/null
-assert_contains "$(cat "$STUB_LOG")" "agent start data-analysis-neuronchat --kind" "agent name sanitized"
+omagit-herdr agent "$O" "Data Analysis/My Tool" claude >/dev/null
+assert_contains "$(cat "$STUB_LOG")" "agent start data-analysis-my-tool --kind" "agent name sanitized"
 touch "$STUB_DIR/agent-start-fail"
 : > "$STUB_LOG"
 res=$(result_line "$(omagit-herdr agent "$O" "other" claude || true)")

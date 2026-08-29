@@ -36,7 +36,7 @@ out=$(omagit-config tracking)
 assert_eq '{"roots":[],"repos":[],"excluded":[]}' "$(jq -c . <<<"$out")" "empty tracking when file absent"
 assert_no_file "$OMAGIT_CONFIG_DIR/tracking.json" "tracking still absent after read"
 
-NUC="$TMP/nucleus"
+NUC="$TMP/projects"
 make_repo "$NUC/alpha"
 make_repo "$NUC/group/beta"
 make_repo "$NUC/group/beta/inner"          # nested inside a repo: must not appear
