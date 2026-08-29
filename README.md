@@ -10,6 +10,10 @@ agent — without leaving the bar.
 Local state is live (inotify-driven, fallback timer). Nothing touches the
 network unless you press **Fetch all** or a per-repo **Fetch**.
 
+<p align="center">
+  <img src="preview.png" alt="The omagit panel: seven tracked repos, two needing attention, each on one line with branch, dirty count, ahead/behind, and last-commit age" width="546">
+</p>
+
 ## Install
 
 ```bash
@@ -45,6 +49,12 @@ IPC target `omagit` also accepts `open`, `close`, `refresh`, and
 
 ## Using it
 
+<p align="center">
+  <img src="docs/add-repo.png" alt="The + button reveals a path field with Add root and Add repo" width="543">
+  <br>
+  <img src="docs/repo-actions.png" alt="An expanded repo row: last commit subject, dirty files, and the Commit / Branch / Switch / PR / FF main / Fetch / Diff / Term / claude action strip" width="540">
+</p>
+
 - **Bar icon** — git-branch glyph with a badge counting repos that are dirty,
   ahead, or behind (hidden at zero). Left-click toggles the panel, right-click
   refreshes.
@@ -76,8 +86,10 @@ IPC target `omagit` also accepts `open`, `close`, `refresh`, and
   - **Term** / **agent** — terminal or `omarchy-default-agent` rooted in the
     repo, via the native launchers or herdr (see `launcher`). With no default
     agent set the button says so.
-  - **Merge** on a PR runs `gh pr merge --<mergeStrategy> [--delete-branch]`,
-    then fast-forwards main and prunes local branches whose upstream is gone.
+  - **Merge** on a PR runs `gh pr merge --<mergeStrategy>`, deletes the remote
+    branch (`deleteBranchOnMerge`), then fast-forwards main and prunes local
+    branches whose upstream is gone — removing a clean worktree on that branch
+    first; a dirty one is kept and reported.
     A failing-CI PR turns the button red and needs a second click.
   - Every action writes a one-line status; a failed one expands to the captured
     output on click.
@@ -140,3 +152,7 @@ omarchy plugin validate "$PWD"    # manifest check (real path, not the symlink)
 
 All git/gh/herdr logic lives in `bin/` and is exercised by `tests/` with stub
 `gh`/`herdr`/launchers on `PATH`; QML only renders records. See `CLAUDE.md`.
+
+## License
+
+[MIT](LICENSE).
