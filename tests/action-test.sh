@@ -202,6 +202,23 @@ assert_contains "$res" "allowMerge" "refusal names the setting"
 assert_eq "$before" "$(wc -l < "$STUB_LOG")" "gh not invoked when disabled"
 jq 'del(.allowMerge)' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s" && mv "$TMP/s" "$OMAGIT_CONFIG_DIR/settings.json"
 
+# --- merge-pr while checked out on the PR branch ------------------------------------
+git -C "$R" switch -q -c work/on-it; printf 'o\n' > "$R/o.txt"; git -C "$R" add o.txt; git -C "$R" commit -qm o; git -C "$R" push -q -u origin work/on-it
+printf '[{"number":11,"title":"o","url":"u","headRefName":"work/on-it","statusCheckRollup":[]}]' > "$STUB_DIR/prs.json"
+res=$(result_line "$(omagit-action merge-pr "$R" 11)")
+assert_contains "$res" "switched to main" "clean checkout switched to main"
+assert_eq "main" "$(git -C "$R" symbolic-ref --short HEAD)" "ends on main"
+assert_eq "" "$(git -C "$R" branch --list work/on-it)" "merged branch pruned in the same pass"
+git -C "$R" switch -q -c work/dirty-it; printf 'd\n' > "$R/d.txt"; git -C "$R" add d.txt; git -C "$R" commit -qm d; git -C "$R" push -q -u origin work/dirty-it
+printf 'wip\n' > "$R/wip.txt"
+printf '[{"number":12,"title":"d","url":"u","headRefName":"work/dirty-it","statusCheckRollup":[]}]' > "$STUB_DIR/prs.json"
+res=$(result_line "$(omagit-action merge-pr "$R" 12)")
+assert_contains "$res" "still on work/dirty-it" "dirty checkout not switched"
+assert_eq "work/dirty-it" "$(git -C "$R" symbolic-ref --short HEAD)" "stays on branch"
+assert_contains "$(git -C "$R" branch --list work/dirty-it)" "work/dirty-it" "current branch never pruned"
+assert_file "$R/wip.txt" "uncommitted file untouched"
+rm "$R/wip.txt"; git -C "$R" switch -q main; git -C "$R" branch -q -D work/dirty-it
+
 # --- prune-gone with worktrees: clean removed, dirty kept ---------------------------
 for b in work/wt-clean work/wt-dirty; do
   git -C "$R" branch -q "$b" main; git -C "$R" push -q -u origin "$b"

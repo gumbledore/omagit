@@ -86,7 +86,7 @@ IPC target `omagit` also accepts `open`, `close`, `refresh`, and
   - **Term** / **agent** — terminal or `omarchy-default-agent` rooted in the
     repo, via the native launchers or herdr (see `launcher`). With no default
     agent set the button says so.
-  - **Merge** on a PR runs `gh pr merge --<mergeStrategy>`, deletes the remote
+  - **Merge** on a PR runs `gh pr merge --<mergeStrategy>`, switches a clean checkout of the merged branch back to the default branch, deletes the remote
     branch (`deleteBranchOnMerge`), then fast-forwards main and prunes local
     branches whose upstream is gone — removing a clean worktree on that branch
     first; a dirty one is kept and reported.
