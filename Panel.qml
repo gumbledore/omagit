@@ -14,7 +14,7 @@ import "panel" as OmagitPanel
 // starts processes, and parses their tab-separated records.
 Panel {
   id: root
-  moduleName: "omagit"
+  moduleName: "gumbledore.omagit"
   ipcTarget: "omagit"
   manageIpc: false
 
@@ -32,7 +32,7 @@ Panel {
   readonly property string pluginDir: Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "").replace(/\/$/, "")
   readonly property string binDir: pluginDir + "/bin"
   readonly property string home: Quickshell.env("HOME")
-  readonly property string configDir: home + "/.config/omagit"
+  readonly property string configDir: home + "/.config/gumbledore.omagit"
   readonly property string settingsPath: configDir + "/settings.json"
 
   // ------------------------------------------------------------ settings
@@ -408,7 +408,7 @@ Panel {
     root.uninstallArmed = false
     if (watchProcess.running) watchProcess.signal(15)
     Quickshell.execDetached(["bash", "-c",
-      'setsid nohup bash -c \'rm -rf "$HOME/.config/omagit"; omarchy plugin remove omagit --yes\' >/dev/null 2>&1 &'])
+      'setsid nohup bash -c \'rm -rf "$HOME/.config/gumbledore.omagit"; omarchy plugin remove gumbledore.omagit --yes\' >/dev/null 2>&1 &'])
   }
 
   Component.onCompleted: settingsBootstrap.running = true
@@ -597,7 +597,7 @@ Panel {
           text: root.uninstallArmed ? "Confirm uninstall" : "Uninstall"
           foreground: root.uninstallArmed ? root.urgent : root.muted
           fontSize: Style.font.caption
-          tooltipText: "Removes ~/.config/omagit and the plugin"
+          tooltipText: "Removes ~/.config/gumbledore.omagit and the plugin"
           onClicked: root.uninstallClicked()
         }
       }

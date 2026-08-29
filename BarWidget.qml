@@ -8,7 +8,7 @@ import qs.Ui
 // the watcher runs and the badge stays live while the popup is closed.
 BarWidget {
   id: root
-  moduleName: "omagit"
+  moduleName: "gumbledore.omagit"
 
   // The widget, not the panel, is the bar's popout identity (see omaplug).
   readonly property bool opened: panelItem ? panelItem.opened === true : false

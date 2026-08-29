@@ -1,7 +1,7 @@
 #!/bin/bash
 # Shared fixtures for helper tests. Sourced by each *-test.sh.
 #
-# Every test runs against a throwaway HOME so ~/.config/omagit is never
+# Every test runs against a throwaway HOME so ~/.config/gumbledore.omagit is never
 # touched, with the stub gh/herdr on PATH ahead of the real ones.
 
 set -euo pipefail
@@ -12,7 +12,7 @@ trap 'rm -rf -- "$TMP"' EXIT
 
 export HOME="$TMP/home"
 mkdir -p "$HOME"
-export OMAGIT_CONFIG_DIR="$HOME/.config/omagit"
+export OMAGIT_CONFIG_DIR="$HOME/.config/gumbledore.omagit"
 export OMAGIT_PLUGIN_DIR="$ROOT"
 export PATH="$ROOT/tests/stubs:$ROOT/bin:$PATH"
 export GIT_CONFIG_GLOBAL="$TMP/gitconfig"

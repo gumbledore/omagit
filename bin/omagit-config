@@ -9,7 +9,7 @@
 #   untrack-root <dir>       stop tracking a root and everything under it
 #   discover                 TSV: path<TAB>label<TAB>root<TAB>kind(root|repo)
 #
-# Nothing here touches anything outside ~/.config/omagit.
+# Nothing here touches anything outside ~/.config/gumbledore.omagit.
 
 source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/../lib/common.sh"
 

@@ -9,13 +9,13 @@ pseudo-monorepo plus any other paths — and exposes housekeeping actions from t
 - `bin/` — bash helpers that do all git/gh/herdr/filesystem work and stream
   tab-separated records (`config`, `state`, `remote`, `action`, `watch`, `herdr`).
 - `lib/common.sh` — shared env (no prompts ever), settings reader, branch helpers.
-- `defaults/settings.json` — shipped defaults, merged into `~/.config/omagit/settings.json`.
+- `defaults/settings.json` — shipped defaults, merged into `~/.config/gumbledore.omagit/settings.json`.
 - `tests/` — fixture-repo tests for every helper; `tests/stubs/` fakes `gh`, `herdr`, launchers.
 
 ## How to run
 
 - Tests: `tests/run.sh` (no shell, no network).
-- Dev install: `ln -sfn "$PWD" ~/.config/omarchy/plugins/omagit && omarchy plugin enable omagit right`.
+- Dev install: `ln -sfn "$PWD" ~/.config/omarchy/plugins/gumbledore.omagit && omarchy plugin enable gumbledore.omagit right`.
 - After editing QML the shell may serve a stale compile cache: clear
   `~/.cache/quickshell/qmlcache` and `omarchy-restart-shell`.
 - Validate manifest: `omarchy plugin validate "$PWD"` (use the real path, not the symlink).

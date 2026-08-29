@@ -16,7 +16,9 @@ export GH_NO_UPDATE_NOTIFIER=1
 export LC_ALL=C.UTF-8
 
 OMAGIT_PLUGIN_DIR="${OMAGIT_PLUGIN_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
-OMAGIT_CONFIG_DIR="${OMAGIT_CONFIG_DIR:-$HOME/.config/omagit}"
+OMAGIT_CONFIG_DIR="${OMAGIT_CONFIG_DIR:-$HOME/.config/gumbledore.omagit}"
+# one-time move of the pre-namespace config dir (plugin id used to be plain "omagit")
+if [[ -d $HOME/.config/omagit && ! -e $OMAGIT_CONFIG_DIR ]]; then mv "$HOME/.config/omagit" "$OMAGIT_CONFIG_DIR"; fi
 OMAGIT_SETTINGS="$OMAGIT_CONFIG_DIR/settings.json"
 OMAGIT_TRACKING="$OMAGIT_CONFIG_DIR/tracking.json"
 OMAGIT_DEFAULTS="$OMAGIT_PLUGIN_DIR/defaults/settings.json"

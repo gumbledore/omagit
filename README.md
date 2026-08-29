@@ -21,8 +21,8 @@ edits are picked up by the shell):
 
 ```bash
 git clone https://github.com/gumbledore/omagit.git ~/Nucleus/local-apps/omagit
-ln -sfn ~/Nucleus/local-apps/omagit ~/.config/omarchy/plugins/omagit
-omarchy plugin enable omagit right
+ln -sfn ~/Nucleus/local-apps/omagit ~/.config/omarchy/plugins/gumbledore.omagit
+omarchy plugin enable gumbledore.omagit right
 ```
 
 If the shell keeps showing old QML after an edit, clear its compile cache and
@@ -82,12 +82,12 @@ IPC target `omagit` also accepts `open`, `close`, `refresh`, and
   - Every action writes a one-line status; a failed one expands to the captured
     output on click.
 - **Footer** — Uninstall (arms on first click, confirms on the second within a
-  few seconds): removes `~/.config/omagit` and runs
-  `omarchy plugin remove omagit --yes`.
+  few seconds): removes `~/.config/gumbledore.omagit` and runs
+  `omarchy plugin remove gumbledore.omagit --yes`.
 
 ## Settings
 
-`~/.config/omagit/settings.json` is created from the shipped defaults the first
+`~/.config/gumbledore.omagit/settings.json` is created from the shipped defaults the first
 time the plugin loads and re-merged on every load: missing keys are added,
 your values are never overwritten, and `schemaVersion` is recorded. Edits apply
 live. There are no option menus in the panel.
@@ -107,7 +107,7 @@ live. There are no option menus in the panel.
 | `openFileCommand` | `"omarchy-launch-editor"` | Command that receives an absolute path (default: the Omarchy default editor); e.g. `"zeditor"` for Zed |
 | `ghPrLimit` | `20` | `--limit` for `gh pr list` |
 
-Tracking lives in `~/.config/omagit/tracking.json` (`roots`, `repos`,
+Tracking lives in `~/.config/gumbledore.omagit/tracking.json` (`roots`, `repos`,
 `excluded`; absolute paths). It is created on the first add.
 
 ## Caveats
@@ -123,10 +123,10 @@ Tracking lives in `~/.config/omagit/tracking.json` (`roots`, `repos`,
 ## Removing
 
 The in-panel **Uninstall** cleans up everything. If you remove the plugin with
-`omarchy plugin remove omagit` or omaplug instead, delete the config yourself:
+`omarchy plugin remove gumbledore.omagit` or omaplug instead, delete the config yourself:
 
 ```bash
-rm -rf ~/.config/omagit
+rm -rf ~/.config/gumbledore.omagit
 ```
 
 and drop the keybind from `bindings.conf`.

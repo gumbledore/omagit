@@ -94,3 +94,10 @@ assert_eq "" "$(omagit-config discover)" "nothing tracked after root removal"
 assert_eq "$TMP/solo" "$(jq -r '.repos[0]' "$OMAGIT_CONFIG_DIR/tracking.json")" "relative path made absolute"
 
 finish
+
+# --- pre-namespace config dir is moved once ------------------------------------
+rm -rf "$OMAGIT_CONFIG_DIR" "$HOME/.config/omagit"
+mkdir -p "$HOME/.config/omagit"; echo '{"repos":["/x"]}' > "$HOME/.config/omagit/tracking.json"
+omagit-config settings >/dev/null
+assert_no_file "$HOME/.config/omagit/tracking.json" "old config dir moved away"
+assert_eq "/x" "$(jq -r '.repos[0]' "$OMAGIT_CONFIG_DIR/tracking.json")" "old tracking carried over"
