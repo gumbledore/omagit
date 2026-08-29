@@ -244,6 +244,7 @@ cmd_prune_gone() {
 cmd_merge_pr() {
   local repo=$1 num=$2 strategy head msg
   [[ $num =~ ^[0-9]+$ ]] || err "Invalid PR number"
+  [[ $(setting allowMerge) != false ]] || err "Merging from omagit is disabled (allowMerge)"
   is_github "$repo" || err "origin is not a GitHub remote"
   strategy=$(setting mergeStrategy)
   [[ $strategy =~ ^(squash|merge|rebase)$ ]] || strategy=squash

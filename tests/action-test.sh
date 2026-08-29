@@ -194,6 +194,13 @@ rm "$STUB_DIR/pr-9-open"
 res=$(result_line "$(omagit-action merge-pr "$R" 9 || true)")
 assert_contains "$res" "OK" "gh exit 1 but PR MERGED is not a failure"
 rm "$STUB_DIR/merge-fail"
+jq '.allowMerge = false' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s" && mv "$TMP/s" "$OMAGIT_CONFIG_DIR/settings.json"
+before=$(wc -l < "$STUB_LOG")
+res=$(result_line "$(omagit-action merge-pr "$R" 9 || true)")
+assert_contains "$res" "ERR" "merge refused when allowMerge=false"
+assert_contains "$res" "allowMerge" "refusal names the setting"
+assert_eq "$before" "$(wc -l < "$STUB_LOG")" "gh not invoked when disabled"
+jq 'del(.allowMerge)' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s" && mv "$TMP/s" "$OMAGIT_CONFIG_DIR/settings.json"
 
 # --- prune-gone with worktrees: clean removed, dirty kept ---------------------------
 for b in work/wt-clean work/wt-dirty; do
