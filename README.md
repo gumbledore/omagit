@@ -108,6 +108,7 @@ live. There are no option menus in the panel.
 |-----|---------|---------|
 | `schemaVersion` | `1` | Managed by the plugin |
 | `launcher` | `"native"` | `"native"` (`xdg-terminal-exec`, `omarchy-agent`) or `"herdr"` (one workspace per repo — Terminal focuses it, each agent click opens a new tab; agent-status dot on rows) |
+| `allowMerge` | `true` | Show the Merge button and allow `merge-pr`; set `false` on shared repos where merging should happen through the PR page |
 | `mergeStrategy` | `"squash"` | `squash` \| `merge` \| `rebase` |
 | `deleteBranchOnMerge` | `true` | Delete the PR's remote branch after merging (local copy is removed by prune) |
 | `pruneGoneAfterMerge` | `true` | Delete local branches whose upstream is gone after a merge (a clean worktree on that branch is removed first; a dirty one is kept and reported) |

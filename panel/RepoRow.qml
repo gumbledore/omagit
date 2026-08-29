@@ -346,6 +346,7 @@ Item {
           }
           Button {
             readonly property bool armed: row.armedMerge === prRow.modelData.number
+            visible: String(row.panel.cfgVal("allowMerge", true)) !== "false"
             text: armed ? "Merge anyway" : "Merge"
             fontSize: row.capSize
             foreground: prRow.modelData.ci === "failing" ? row.urgent : row.fg

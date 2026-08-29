@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "launcher": "native",
+  "allowMerge": true,
   "mergeStrategy": "squash",
   "deleteBranchOnMerge": true,
   "pruneGoneAfterMerge": true,
