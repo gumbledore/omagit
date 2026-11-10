@@ -11,12 +11,34 @@
 #   graphql.json  body for `gh api graphql` (default: empty result for every alias);
 #                 exits 1 when it has a top-level "errors" key, like real gh
 #   graphql-fail  `gh api graphql` fails with no body
+#   notifications.json  body for `gh api notifications?per_page=50` (default [])
+#   notifications-forbidden  that call fails with an HTTP 403 (no rate-limit/auth wording)
+#   notifications-fail       that call fails with HTTP 500
+#   patch-fail    `gh api --method PATCH notifications/threads/N` fails (else silent success)
+#   put-fail      `gh api --method PUT notifications ...` fails (else silent success)
+#   runs-O-R.json body for `gh api repos/O/R/actions/runs?per_page=30` (default {"workflow_runs":[]})
+#   runs-fail     every actions/runs call fails with HTTP 500
+#   runs-fail-O-R that repo's actions/runs call fails with HTTP 500
 # `gh pr merge` performs a real merge in the bare origin so ff/prune have
 # something to act on.
 printf 'gh %s\n' "$*" >> "$STUB_LOG"
 [[ -e $STUB_DIR/gh-fail ]] && { echo "gh: authentication required" >&2; exit 1; }
 [[ $1 == api && -e $STUB_DIR/gh-logged-out ]] && { echo "gh: Bad credentials (HTTP 401)" >&2; exit 1; }
+if [[ $1 == api && $2 == --method ]]; then
+  case "$3 $4" in
+    "PATCH notifications/threads/"*) [[ -e $STUB_DIR/patch-fail ]] && { echo "gh: HTTP 500: patch failed" >&2; exit 1; }; exit 0 ;;
+    "PUT notifications") [[ -e $STUB_DIR/put-fail ]] && { echo "gh: HTTP 500: put failed" >&2; exit 1; }; exit 0 ;;
+  esac
+fi
 case "$1 $2" in
+  "api notifications?per_page=50")
+    [[ -e $STUB_DIR/notifications-forbidden ]] && { echo "gh: Resource not accessible by personal access token (HTTP 403)" >&2; exit 1; }
+    [[ -e $STUB_DIR/notifications-fail ]] && { echo "gh: HTTP 500: server error" >&2; exit 1; }
+    cat "$STUB_DIR/notifications.json" 2>/dev/null || echo "[]" ;;
+  "api repos/"*"/actions/runs?per_page=30")
+    nwo=${2#repos/}; nwo=${nwo%%/actions/*}
+    [[ -e $STUB_DIR/runs-fail || -e $STUB_DIR/runs-fail-${nwo//\//-} ]] && { echo "gh: HTTP 500: server error" >&2; exit 1; }
+    cat "$STUB_DIR/runs-${nwo//\//-}.json" 2>/dev/null || echo '{"workflow_runs":[]}' ;;
   "api rate_limit")
     cat "$STUB_DIR/rate_limit.json" 2>/dev/null \
       || echo '{"resources":{"core":{"limit":5000,"remaining":4999,"reset":0},"graphql":{"limit":5000,"remaining":4999,"reset":0}}}' ;;
@@ -30,7 +52,7 @@ case "$1 $2" in
       cat "$STUB_DIR/graphql.json"
       jq -e 'has("errors")' "$STUB_DIR/graphql.json" >/dev/null 2>&1 && exit 1
     else
-      echo '{"data":{"reviews":{"nodes":[]},"prs":{"nodes":[]}}}'
+      echo '{"data":{"reviews":{"nodes":[]},"prs":{"nodes":[]},"issues":{"nodes":[]}}}'
     fi ;;
   "config get")
     cat "$STUB_DIR/login" 2>/dev/null || echo octocat ;;

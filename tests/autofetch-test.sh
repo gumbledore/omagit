@@ -122,8 +122,19 @@ assert_eq $'AUTOFETCH\tok\t\t' "$(rec "$out" AUTOFETCH)" "zero-repo full run ok"
 # inbox section ERR -> err result
 touch "$STUB_DIR/graphql-fail"
 out=$(OMAGIT_NOW=$((T0 + 300200)) omagit-autofetch run auto --inbox "$R")
-assert_eq $'AUTOFETCH\terr\tinbox reviews failed; inbox prs failed\t' "$(rec "$out" AUTOFETCH)" "inbox ERR sections count as err"
+assert_eq $'AUTOFETCH\terr\tinbox notifications failed; inbox reviews failed; inbox prs failed; inbox issues failed; inbox actions failed\t' "$(rec "$out" AUTOFETCH)" "inbox ERR sections count as err"
 rm "$STUB_DIR/graphql-fail"
+
+# a single failing REST section counts; a missing notifications scope is a standing condition
+touch "$STUB_DIR/notifications-fail"
+out=$(OMAGIT_NOW=$((T0 + 300300)) omagit-autofetch run auto --inbox "$R")
+assert_eq $'AUTOFETCH\terr\tinbox notifications failed\t' "$(rec "$out" AUTOFETCH)" "notifications ERR counts as err"
+rm "$STUB_DIR/notifications-fail"
+touch "$STUB_DIR/notifications-forbidden"
+out=$(OMAGIT_NOW=$((T0 + 300400)) omagit-autofetch run auto --inbox "$R")
+assert_contains "$out" $'GH\tmissing-scope' "missing-scope streamed"
+assert_eq $'AUTOFETCH\tok\t\t' "$(rec "$out" AUTOFETCH)" "missing-scope does not make a run err"
+rm "$STUB_DIR/notifications-forbidden"
 
 # --- working tree untouched -----------------------------------------------------
 W="$TMP/behind"; clone_repo "$ORIGIN" "$W"

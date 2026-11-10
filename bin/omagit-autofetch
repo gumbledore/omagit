@@ -70,7 +70,7 @@ cmd_run() {
   if (( full )); then S[last_start]=$t; save_state; fi
 
   # fd closed for the child so a lingering git/gh daemon can't hold the lock.
-  # gh missing is a standing condition (the banner covers it), not a failed run.
+  # gh missing / missing-scope are standing conditions (the banner covers it), not a failed run.
   while IFS= read -r line; do
     printf '%s\n' "$line"
     IFS=$'\t' read -r -a f <<<"$line"
@@ -78,7 +78,7 @@ cmd_run() {
       FETCH) [[ ${f[2]:-} == ERR ]] && fetch_err=$((fetch_err + 1)) ;;
       PRS)   [[ ${f[2]:-} == ERR ]] && prs_err=$((prs_err + 1)) ;;
       SECTION) [[ ${f[2]:-} == ERR ]] && inbox_errs+=("${f[1]}") ;;
-      GH)    if [[ ${f[1]:-ok} != ok && ${f[1]} != missing ]]; then gh_state=${f[1]}; [[ ${f[1]} == rate-limited ]] && { backoff=1; gh_reset=${f[2]:-}; }; fi ;;
+      GH)    if [[ ${f[1]:-ok} != ok && ${f[1]} != missing && ${f[1]} != missing-scope ]]; then gh_state=${f[1]}; [[ ${f[1]} == rate-limited ]] && { backoff=1; gh_reset=${f[2]:-}; }; fi ;;
     esac
   done < <( { (( $# > 0 )) && "$BIN_DIR/omagit-remote" "$@"; (( full )) && "$BIN_DIR/omagit-inbox" fetch "$@"; } {lockfd}>&- )
 

@@ -116,6 +116,7 @@ Panel {
     for (var k in root.inbox.sections) n += root.inbox.sections[k].items.length
     return n
   }
+  readonly property int inboxUnreadCount: root.sectionItems("notifications").length
   readonly property int inboxReviewCount: root.sectionItems("reviews").length
   readonly property int inboxFailingPrCount: root.sectionItems("prs").filter(function(i) { return i.ci === "failing" }).length
 
@@ -129,6 +130,42 @@ Panel {
     command: [root.binDir + "/omagit-config", "ui-get", "tab"]
     stdout: StdioCollector { id: tabOut; waitForEnd: true }
     onExited: function(exitCode) { if (String(tabOut.text).trim() === "inbox") root.tab = "inbox" }
+  }
+
+  // mark-read / mark-all: one omagit-inbox action at a time
+  property string inboxMessage: ""
+  property var inboxPendingIds: []
+  property Process inboxActionProcess: Process {
+    stdout: StdioCollector { id: inboxActionOut; waitForEnd: true }
+    onExited: function(exitCode) {
+      var res = null
+      var recs = Format.splitRecords(inboxActionOut.text)
+      for (var i = 0; i < recs.length; i++) if (recs[i][0] === "RESULT") res = recs[i]
+      if (res && res[1] === "OK") {
+        root.inbox = Format.withoutNotifications(root.inbox, root.inboxPendingIds)
+        root.inboxMessage = ""
+      } else {
+        root.inboxMessage = res ? (res[2] || "action failed") : "action failed"
+      }
+      root.inboxPendingIds = []
+    }
+  }
+
+  function markNotificationRead(id) {
+    if (root.inboxActionProcess.running) return
+    root.inboxPendingIds = [id]
+    root.inboxActionProcess.command = [root.binDir + "/omagit-inbox", "mark-read", String(id)]
+    root.inboxActionProcess.running = true
+  }
+
+  function markAllNotificationsRead() {
+    if (root.inboxActionProcess.running) return
+    var shown = root.sectionItems("notifications")
+    if (shown.length === 0) return
+    var args = Format.markAllArgs(shown)
+    root.inboxPendingIds = shown.filter(function(n) { return n.updatedAt <= args.timestamp }).map(function(n) { return n.id })
+    root.inboxActionProcess.command = [root.binDir + "/omagit-inbox", "mark-all", args.timestamp].concat(args.ids)
+    root.inboxActionProcess.running = true
   }
 
   property Process inboxCacheProcess: Process {
@@ -417,13 +454,14 @@ Panel {
                           message: r[2] || "", next: parseInt(r[3]) || 0 }
       return
     }
-    if (r[0] === "LOGIN" || r[0] === "REVIEW" || r[0] === "MYPR" || r[0] === "SECTION") {
+    if (r[0] === "LOGIN" || r[0] === "NOTIF" || r[0] === "REVIEW" || r[0] === "MYPR" || r[0] === "ISSUE" || r[0] === "RUN" || r[0] === "SECTION") {
       root.inboxBuffer.push(r)
       return
     }
     if (r[0] === "INBOXDONE") {   // omagit-remote's own DONE carries a repo path instead
       root.inbox = Format.mergeInbox(root.inbox, Format.parseInbox(root.inboxBuffer.concat([r])), root.fetchMode === "auto")
       root.inboxBuffer = []
+      root.inboxMessage = ""
       return
     }
     var path = r[1]
@@ -656,7 +694,7 @@ Panel {
           fontSize: Style.font.caption
           bordered: true
           selected: root.tab === "inbox"
-          tooltipText: "Review requests and your pull requests (2)"
+          tooltipText: "Notifications, review requests, your PRs and issues, Actions (2)"
           onClicked: root.setTab("inbox")
         }
         Item { Layout.fillWidth: true }

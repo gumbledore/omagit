@@ -6,13 +6,14 @@ import qs.Commons
 import qs.Ui
 import "Format.js" as Format
 
-// Inbox tab: review requests and my open PRs from panel.inbox. Renders panel
+// Inbox tab: notifications, review requests, my PRs and issues, and Actions runs from panel.inbox. Renders panel
 // state only; the fetch itself is Panel's Fetch all (omagit-autofetch --inbox).
 //
 // keys (Panel's PanelKeyCatcher delegates here; r / f / 1 / 2 / Tab are Panel's):
 //   j k Up Down  move the highlight      Enter / Space  open the item in the browser
+//   m  mark the highlighted notification read (Enter on a notification opens + marks it)
 // A later ticket adds a section by appending to `sectionDefs` and, for row-scoped
-// keys, handling them in handleKey() against `cursorItem`.
+// keys, handling them in handleKey() against `cursorItem` (return true when handled).
 ColumnLayout {
   id: view
 
@@ -24,28 +25,46 @@ ColumnLayout {
   function moveCursor(dy) {
     if (items.length === 0) return
     var i = Math.max(0, Math.min(items.length - 1, cursorIndex + dy))
-    cursorUrl = items[i].url
-    list.positionViewAtIndex(rowIndexOf(cursorUrl), ListView.Contain)
+    cursorKey = itemKey(items[i])
+    list.positionViewAtIndex(rowIndexOf(cursorKey), ListView.Contain)
+  }
+
+  // Unique per item: notifications can share a URL with other sections' items.
+  function itemKey(it) { return it.kind + ":" + (it.id || it.url) }
+
+  // Open in the browser; a notification is also marked read.
+  function openItem(it) {
+    panel.openUrl(it.url)
+    if (it.kind === "notification") panel.markNotificationRead(it.id)
   }
 
   function activate() {
     var it = cursorItem
-    if (it) panel.openUrl(it.url)
+    if (it) openItem(it)
   }
 
-  function handleKey(text) { return false }
+  function handleKey(text) {
+    if (text === "m" && cursorItem && cursorItem.kind === "notification") {
+      panel.markNotificationRead(cursorItem.id)
+      return true
+    }
+    return false
+  }
 
   function handleEscape() { return false }
 
   function resetCursor() {
-    cursorUrl = ""
+    cursorKey = ""
     list.positionViewAtBeginning()
   }
 
   // ---- sections: fixed order; add new ones here ----
   readonly property var sectionDefs: [
+    { name: "notifications", title: "Notifications" },
     { name: "reviews", title: "Review requests" },
-    { name: "prs", title: "My pull requests" }
+    { name: "prs", title: "My pull requests" },
+    { name: "issues", title: "Assigned issues" },
+    { name: "actions", title: "Actions" }
   ]
 
   // Flat [header | item] model for the list, and the items alone for the cursor.
@@ -54,31 +73,69 @@ ColumnLayout {
     for (var i = 0; i < sectionDefs.length; i++) {
       var sec = panel.inbox.sections[sectionDefs[i].name]
       if (!sec) continue
-      out.push({ type: "header", title: sectionDefs[i].title, count: sec.items.length,
-                 status: sec.status, message: sec.message, url: "" })
+      out.push({ type: "header", name: sectionDefs[i].name, title: sectionDefs[i].title, count: sec.items.length,
+                 status: sec.status, message: sec.message, key: "" })
       for (var j = 0; j < sec.items.length; j++)
-        out.push({ type: "item", item: sec.items[j], url: sec.items[j].url })
+        out.push({ type: "item", item: sec.items[j], key: itemKey(sec.items[j]) })
     }
     return out
   }
   readonly property var items: rows.filter(function(r) { return r.type === "item" }).map(function(r) { return r.item })
 
-  property string cursorUrl: ""
-  // Falls back to the first item when cursorUrl is gone after a refresh.
+  property string cursorKey: ""
+  // Falls back to the first item when cursorKey is gone after a refresh.
   readonly property int cursorIndex: {
     for (var i = 0; i < items.length; i++)
-      if (items[i].url === cursorUrl) return i
+      if (itemKey(items[i]) === cursorKey) return i
     return items.length > 0 ? 0 : -1
   }
   readonly property var cursorItem: cursorIndex >= 0 ? items[cursorIndex] : null
 
-  function rowIndexOf(url) {
+  function rowIndexOf(key) {
     for (var i = 0; i < rows.length; i++)
-      if (rows[i].type === "item" && rows[i].url === url) return i
+      if (rows[i].type === "item" && rows[i].key === key) return i
     return 0
   }
 
+  // "Mark all read": arms on the first click, fires on the second. Lapses after 6 s,
+  // when the panel closes, and when the notifications list changes.
+  property bool markAllArmed: false
+  readonly property string notificationIds: (panel.inbox.sections.notifications
+    ? panel.inbox.sections.notifications.items : []).map(function(n) { return n.id }).join(",")
+  onNotificationIdsChanged: markAllArmed = false
+  onMarkAllArmedChanged: if (markAllArmed) lapseTimer.restart(); else lapseTimer.stop()
+  Timer {
+    id: lapseTimer
+    interval: 6000
+    onTriggered: view.markAllArmed = false
+  }
+  Connections {
+    target: view.panel
+    function onOpenedChanged() { if (!view.panel.opened) view.markAllArmed = false }
+  }
+
+  function markAllClicked() {
+    if (!markAllArmed) { markAllArmed = true; return }
+    markAllArmed = false
+    panel.markAllNotificationsRead()
+  }
+
   spacing: Style.space(6)
+
+  Text {  // last mark-read / mark-all failure; click to dismiss
+    visible: view.panel.inboxMessage !== ""
+    Layout.fillWidth: true
+    text: view.panel.inboxMessage
+    color: view.panel.urgent
+    wrapMode: Text.Wrap
+    font.family: view.panel.fontFamily
+    font.pixelSize: Style.font.caption
+    MouseArea {
+      anchors.fill: parent
+      cursorShape: Qt.PointingHandCursor
+      onClicked: view.panel.inboxMessage = ""
+    }
+  }
 
   Text {
     Layout.fillWidth: true
@@ -105,7 +162,7 @@ ColumnLayout {
       id: entry
       required property var modelData
       readonly property bool isHeader: modelData.type === "header"
-      readonly property bool highlighted: !isHeader && modelData.url === view.cursorItem?.url
+      readonly property bool highlighted: !isHeader && modelData.key === (view.cursorItem ? view.itemKey(view.cursorItem) : "")
       readonly property var it: modelData.item
       width: list.width
       height: isHeader ? headerCol.implicitHeight + Style.space(6) : Style.space(26)
@@ -118,10 +175,22 @@ ColumnLayout {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         spacing: 0
-        PanelSectionHeader {
-          text: entry.isHeader ? entry.modelData.title + " (" + entry.modelData.count + ")" : ""
-          foreground: view.panel.fg
-          fontFamily: view.panel.fontFamily
+        RowLayout {
+          Layout.fillWidth: true
+          PanelSectionHeader {
+            Layout.fillWidth: true
+            text: entry.isHeader ? entry.modelData.title + " (" + entry.modelData.count + ")" : ""
+            foreground: view.panel.fg
+            fontFamily: view.panel.fontFamily
+          }
+          Button {
+            visible: entry.isHeader && entry.modelData.name === "notifications" && entry.modelData.count > 0
+            text: view.markAllArmed ? "Confirm mark all read" : "Mark all read"
+            foreground: view.markAllArmed ? view.panel.urgent : view.panel.muted
+            fontSize: Style.font.caption
+            tooltipText: "Marks only the notifications shown here as read"
+            onClicked: view.markAllClicked()
+          }
         }
         Text {
           visible: entry.isHeader && entry.modelData.status === "ERR"
@@ -159,23 +228,30 @@ ColumnLayout {
         spacing: Style.space(6)
         opacity: entry.it && entry.it.draft ? 0.6 : 1
 
-        Rectangle {  // CI rollup dot (PRs only)
-          visible: entry.it !== undefined && entry.it.kind === "pr"
+        Rectangle {  // CI rollup dot (PRs) / run state dot
+          visible: entry.it !== undefined && (entry.it.kind === "pr" || entry.it.kind === "run")
           implicitWidth: Style.space(8)
           implicitHeight: Style.space(8)
           radius: width / 2
-          color: entry.it ? Format.ciColor(entry.it.ci, view.panel.accent, view.panel.urgent, view.panel.muted) : "transparent"
+          color: !entry.it ? "transparent"
+               : entry.it.kind === "run" ? Format.ciColor(entry.it.state === "failed" ? "failing" : "pending", view.panel.accent, view.panel.urgent, view.panel.muted)
+               : Format.ciColor(entry.it.ci, view.panel.accent, view.panel.urgent, view.panel.muted)
         }
         Text {
           Layout.fillWidth: true
-          text: entry.it ? entry.it.title + (entry.it.draft ? " (draft)" : "") : ""
+          text: !entry.it ? ""
+              : entry.it.kind === "run" ? entry.it.workflow + " \u2014 " + entry.it.title
+              : entry.it.title + (entry.it.draft ? " (draft)" : "")
           color: entry.it && entry.it.draft ? view.panel.muted : view.panel.fg
           elide: Text.ElideRight
           font.family: view.panel.fontFamily
           font.pixelSize: Style.font.body
         }
         Text {
-          text: entry.it ? entry.it.repo + "#" + entry.it.number : ""
+          text: !entry.it ? ""
+              : entry.it.kind === "notification" ? entry.it.repo + " \u00b7 " + entry.it.reason
+              : entry.it.kind === "run" ? entry.it.repo + " \u00b7 " + entry.it.branch
+              : entry.it.repo + "#" + entry.it.number
           color: view.panel.muted
           font.family: view.panel.fontFamily
           font.pixelSize: Style.font.caption
@@ -187,14 +263,25 @@ ColumnLayout {
           font.family: view.panel.fontFamily
           font.pixelSize: Style.font.caption
         }
+        PanelActionButton {  // notification: mark read in place
+          visible: entry.it !== undefined && entry.it.kind === "notification"
+          iconText: "\udb80\udd2c"
+          size: Style.space(18)
+          fontSize: Style.font.caption
+          foreground: view.panel.muted
+          hoverColor: view.panel.accent
+          tooltipText: "Mark read (m)"
+          onClicked: view.panel.markNotificationRead(entry.it.id)
+        }
       }
       MouseArea {
         visible: !entry.isHeader
         anchors.fill: parent
+        z: -1
         cursorShape: Qt.PointingHandCursor
         onClicked: {
-          view.cursorUrl = entry.modelData.url
-          view.panel.openUrl(entry.modelData.url)
+          view.cursorKey = entry.modelData.key
+          view.openItem(entry.it)
         }
       }
     }

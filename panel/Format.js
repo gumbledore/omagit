@@ -17,6 +17,7 @@ function ghBanner(status) {
   var st = status ? status.state : "ok"
   if (st === "missing") return "gh not found \u2014 install GitHub CLI to see PRs"
   if (st === "logged-out") return "gh is logged out \u2014 run `gh auth login`"
+  if (st === "missing-scope") return "GitHub token lacks the notifications scope \u2014 run `gh auth refresh -s notifications`"
   if (st === "rate-limited") {
     var t = ""
     if (status.reset > 0) {
@@ -79,6 +80,18 @@ function parseInbox(recs) {
       inbox.login = r[1] || ""
     } else if (r[0] === "INBOXDONE") {
       inbox.fetchedAt = (parseInt(r[1]) || 0) * 1000
+    } else if (r[0] === "NOTIF" && r.length >= 9) {
+      _inboxSection(inbox, "notifications").items.push({
+        kind: "notification", id: r[1], repo: r[2], title: r[3], reason: r[4], type: r[5],
+        url: r[6], updatedAt: r[7], localPath: r[8] })
+    } else if (r[0] === "ISSUE" && r.length >= 7) {
+      _inboxSection(inbox, "issues").items.push({
+        kind: "issue", repo: r[1], number: parseInt(r[2]) || 0, title: r[3], url: r[4],
+        updatedAt: r[5], localPath: r[6] })
+    } else if (r[0] === "RUN" && r.length >= 10) {
+      _inboxSection(inbox, "actions").items.push({
+        kind: "run", repo: r[1], id: r[2], workflow: r[3], title: r[4], url: r[5],
+        state: r[6], branch: r[7], updatedAt: r[8], localPath: r[9] })
     } else if (r[0] === "REVIEW" && r.length >= 8) {
       _inboxSection(inbox, "reviews").items.push({
         kind: "review", repo: r[1], number: parseInt(r[2]) || 0, title: r[3], url: r[4],
@@ -114,6 +127,26 @@ function mergeInbox(prev, next, quiet) {
   }
   if (anyOk) { out.fetchedAt = next.fetchedAt; out.fromCache = false }
   return out
+}
+
+// { timestamp, ids } for omagit-inbox mark-all: the newest updatedAt among the shown
+// notifications and the ids of those at exactly that timestamp (ISO strings sort).
+function markAllArgs(items) {
+  var ts = ""
+  for (var i = 0; i < items.length; i++) if (items[i].updatedAt > ts) ts = items[i].updatedAt
+  var ids = []
+  for (var j = 0; j < items.length; j++) if (items[j].updatedAt === ts) ids.push(items[j].id)
+  return { timestamp: ts, ids: ids }
+}
+
+// Copy of the inbox without the notifications whose id is in `ids`.
+function withoutNotifications(inbox, ids) {
+  var sec = inbox.sections.notifications
+  if (!sec) return inbox
+  var sections = Object.assign({}, inbox.sections)
+  sections.notifications = Object.assign({}, sec, {
+    items: sec.items.filter(function(n) { return ids.indexOf(n.id) < 0 }) })
+  return Object.assign({}, inbox, { sections: sections })
 }
 
 function inboxCaption(inbox, nowMs) {
