@@ -5,19 +5,27 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 assert_no_file "$OMAGIT_CONFIG_DIR/settings.json" "no settings before first load"
 out=$(omagit-config settings)
 assert_file "$OMAGIT_CONFIG_DIR/settings.json" "settings created on first load"
-for key in schemaVersion launcher mergeStrategy deleteBranchOnMerge pruneGoneAfterMerge branchPrefix fallbackRefreshSeconds debounceMs scanDepth ignoreDirs openFileCommand ghPrLimit; do
+for key in schemaVersion launcher mergeStrategy deleteBranchOnMerge pruneGoneAfterMerge branchPrefix fallbackRefreshSeconds debounceMs scanDepth ignoreDirs openFileCommand ghPrLimit autoFetchMinutes linkBehavior; do
   assert_eq "true" "$(jq --arg k "$key" 'has($k)' "$OMAGIT_CONFIG_DIR/settings.json")" "settings has $key"
 done
 assert_eq "squash" "$(jq -r .mergeStrategy <<<"$out")" "settings printed to stdout"
 assert_no_file "$OMAGIT_CONFIG_DIR/tracking.json" "tracking not created by settings load"
 
 # User edits survive; deleted keys come back; unknown keys are kept.
-jq '.mergeStrategy = "rebase" | .custom = 1 | del(.ghPrLimit)' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s.json"
+jq '.mergeStrategy = "rebase" | .custom = 1 | del(.ghPrLimit) | del(.linkBehavior)' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s.json"
 mv "$TMP/s.json" "$OMAGIT_CONFIG_DIR/settings.json"
 out=$(omagit-config settings)
 assert_eq "rebase" "$(jq -r .mergeStrategy <<<"$out")" "user value preserved on merge"
 assert_eq "20" "$(jq -r .ghPrLimit <<<"$out")" "missing key restored from defaults"
 assert_eq "1" "$(jq -r .custom <<<"$out")" "unknown key kept"
+assert_eq "browser" "$(jq -r .linkBehavior <<<"$out")" "linkBehavior merged into user file"
+jq '.linkBehavior = "webapp"' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s.json"; mv "$TMP/s.json" "$OMAGIT_CONFIG_DIR/settings.json"
+assert_eq "webapp" "$(omagit-config settings | jq -r .linkBehavior)" "user linkBehavior survives merge"
+assert_eq "30" "$(jq -r .autoFetchMinutes "$OMAGIT_CONFIG_DIR/settings.json")" "autoFetchMinutes default on bootstrap"
+jq 'del(.autoFetchMinutes)' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s.json"; mv "$TMP/s.json" "$OMAGIT_CONFIG_DIR/settings.json"
+assert_eq "30" "$(omagit-config settings | jq -r .autoFetchMinutes)" "autoFetchMinutes merged into user file lacking it"
+jq '.autoFetchMinutes = 0' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s.json"; mv "$TMP/s.json" "$OMAGIT_CONFIG_DIR/settings.json"
+assert_eq "0" "$(omagit-config settings | jq -r .autoFetchMinutes)" "user autoFetchMinutes survives merge"
 assert_eq "1" "$(jq -r .schemaVersion <<<"$out")" "schemaVersion recorded"
 before=$(stat -c %Y "$OMAGIT_CONFIG_DIR/settings.json")
 sleep 1
@@ -92,6 +100,20 @@ assert_eq "" "$(omagit-config discover)" "nothing tracked after root removal"
 # Tilde and relative paths are normalized to absolute.
 ( cd "$TMP" && omagit-config add-repo "./solo" >/dev/null )
 assert_eq "$TMP/solo" "$(jq -r '.repos[0]' "$OMAGIT_CONFIG_DIR/tracking.json")" "relative path made absolute"
+
+# --- ui state ---------------------------------------------------------------------
+export OMAGIT_CACHE_DIR="$TMP/cache"
+assert_eq "" "$(omagit-config ui-get tab)" "ui-get on missing file is empty"
+omagit-config ui-set tab inbox
+assert_eq "inbox" "$(omagit-config ui-get tab)" "ui-set then ui-get"
+omagit-config ui-set other-key $'a\tb\nc'
+omagit-config ui-set tab repos
+assert_eq "repos" "$(omagit-config ui-get tab)" "ui-set replaces"
+assert_eq "a b c" "$(omagit-config ui-get other-key)" "value flattened, other keys kept"
+assert_eq "2" "$(wc -l < "$OMAGIT_CACHE_DIR/ui.state")" "one line per key"
+assert_no_file "$OMAGIT_CACHE_DIR/ui.state.tmp" "no tmp file left"
+assert_contains "$(omagit-config ui-set 'Bad Key' x 2>&1 || true)" "invalid ui key" "key restricted to [a-z-]+"
+assert_contains "$(omagit-config ui-get 'a=b' 2>&1 || true)" "invalid ui key" "ui-get validates key"
 
 finish
 

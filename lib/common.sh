@@ -22,7 +22,11 @@ if [[ -d $HOME/.config/omagit && ! -e $OMAGIT_CONFIG_DIR ]]; then mv "$HOME/.con
 OMAGIT_SETTINGS="$OMAGIT_CONFIG_DIR/settings.json"
 OMAGIT_TRACKING="$OMAGIT_CONFIG_DIR/tracking.json"
 OMAGIT_DEFAULTS="$OMAGIT_PLUGIN_DIR/defaults/settings.json"
+OMAGIT_CACHE_DIR="${OMAGIT_CACHE_DIR:-$HOME/.cache/gumbledore.omagit}"
 OMAGIT_TIMEOUT="${OMAGIT_TIMEOUT:-60}"
+
+# Current epoch seconds; tests inject time through OMAGIT_NOW.
+now() { printf '%s\n' "${OMAGIT_NOW:-$(date +%s)}"; }
 
 die() { echo "omagit: $*" >&2; exit 1; }
 
@@ -52,7 +56,33 @@ setting() {
 
 # Run a command with the helper timeout so a hung network call can never
 # freeze the panel. Output and exit code pass through.
+is_github() { git -C "$1" config --get remote.origin.url 2>/dev/null | grep -q "github\.com"; }
 with_timeout() { timeout --foreground -k 5 "$OMAGIT_TIMEOUT" "$@"; }
+
+# Classify an error string from a real gh call: prints logged-out,
+# rate-limited, or nothing.
+gh_classify_error() {
+  if grep -qiE 'HTTP 401|bad credentials|authentication|gh auth login|not logged' <<<"$1"; then echo logged-out
+  elif grep -qiE 'rate limit|HTTP 429' <<<"$1"; then echo rate-limited
+  fi
+}
+
+# One record: GH<TAB>ok|missing|logged-out|rate-limited<TAB>reset_epoch<TAB>message
+# Preflight technique borrowed from robzolkos/omarchy-github (MIT).
+# Failures that are neither auth nor rate limit (e.g. offline) count as ok so
+# they keep surfacing per row.
+gh_status() {
+  local out rc reset
+  if ! command -v gh >/dev/null 2>&1; then tsv GH missing "" "gh not found"; return; fi
+  out=$(with_timeout gh api rate_limit 2>&1); rc=$?
+  if (( rc != 0 )); then
+    if [[ $(gh_classify_error "$out") == logged-out ]]; then tsv GH logged-out "" "gh is logged out"; return; fi
+  else
+    reset=$(jq -r '[.resources.core, .resources.graphql] | map(select(.remaining == 0)) | .[0].reset // empty' <<<"$out" 2>/dev/null)
+    if [[ -n $reset ]]; then tsv GH rate-limited "$reset" "GitHub rate limit reached"; return; fi
+  fi
+  tsv GH ok "" ""
+}
 
 # Current branch name, or "" when HEAD is detached / unborn.
 current_branch() { git -C "$1" symbolic-ref --short -q HEAD 2>/dev/null || true; }

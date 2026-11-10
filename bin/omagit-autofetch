@@ -1,0 +1,112 @@
+#!/bin/bash
+# omagit-autofetch due | run <auto|manual> [--inbox] [<repo>...]: owns "is a fetch due?",
+# the fetch lock, and the last-run record in $OMAGIT_CACHE_DIR. Every fetch
+# (manual or automatic) goes through `run`, so they never overlap.
+#
+#   due   DUE   yes|no  due|disabled|running|backoff|not-yet  next_epoch
+#         LAST  finish_epoch  ok|err|""  auto|manual|""  message
+#   run   streams omagit-remote records unchanged (skipped with no repos), then with
+#         --inbox the omagit-inbox records too (a "full" run), then
+#         AUTOFETCH  ok|err  message  backoff_until
+#         or a single BUSY record when another fetch holds the lock.
+#         Zero repos is only valid with --inbox. Only full runs update the state
+#         below; a run without --inbox takes the lock and streams but leaves the
+#         auto-fetch schedule alone.
+#
+# State (autofetch.state, key=value): last_start last_finish last_result
+# last_mode last_message backoff_until.
+
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
+BIN_DIR=$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")
+STATE_FILE="$OMAGIT_CACHE_DIR/autofetch.state"
+LOCK_FILE="$OMAGIT_CACHE_DIR/fetch.lock"
+mkdir -p "$OMAGIT_CACHE_DIR"
+
+declare -A S
+load_state() {
+  local k v
+  [[ -f $STATE_FILE ]] || return 0
+  while IFS='=' read -r k v; do [[ -n $k ]] && S[$k]=$v; done < "$STATE_FILE"
+}
+save_state() {
+  local k
+  for k in last_start last_finish last_result last_mode last_message backoff_until; do
+    printf '%s=%s\n' "$k" "${S[$k]:-}"
+  done > "$STATE_FILE.tmp" && mv -f "$STATE_FILE.tmp" "$STATE_FILE"
+}
+flat() { local v=${1//$'\n'/ }; printf '%s' "${v//$'\t'/ }"; }
+
+interval_min() {
+  local m; m=$(setting autoFetchMinutes)
+  [[ $m =~ ^[0-9]+$ ]] || m=0
+  printf '%s\n' "$((10#$m))"
+}
+
+cmd_due() {
+  local min t decision reason next=""
+  load_state
+  min=$(interval_min); t=$(now)
+  if (( min <= 0 )); then decision=no reason=disabled
+  elif ! flock -n "$LOCK_FILE" true 2>/dev/null; then decision=no reason=running
+  elif (( ${S[backoff_until]:-0} > t )); then decision=no reason=backoff next=${S[backoff_until]}
+  elif [[ -z ${S[last_finish]:-} ]] || (( S[last_finish] + min * 60 <= t )); then decision=yes reason=due
+  else decision=no reason=not-yet next=$(( S[last_finish] + min * 60 ))
+  fi
+  tsv DUE "$decision" "$reason" "$next"
+  tsv LAST "${S[last_finish]:-}" "${S[last_result]:-}" "${S[last_mode]:-}" "${S[last_message]:-}"
+}
+
+cmd_run() {
+  local mode=$1 lockfd line t min fetch_err=0 auth_hint=0 prs_err=0 gh_state="" gh_reset="" backoff=0 parts=() msg result
+  local full=0 inbox_errs=() name
+  shift
+  if [[ ${1:-} == --inbox ]]; then full=1; shift; fi
+  [[ $mode == auto || $mode == manual ]] && (( full || $# > 0 )) \
+    || die "usage: omagit-autofetch run <auto|manual> [--inbox] [<repo>...]"
+  exec {lockfd}>"$LOCK_FILE"
+  if ! flock -n "$lockfd"; then tsv BUSY; return 0; fi
+  load_state; t=$(now); min=$(interval_min)
+  if (( full )); then S[last_start]=$t; save_state; fi
+
+  # fd closed for the child so a lingering git/gh daemon can't hold the lock.
+  # gh missing / missing-scope are standing conditions (the banner covers it), not a failed run.
+  while IFS= read -r line; do
+    printf '%s\n' "$line"
+    IFS=$'\t' read -r -a f <<<"$line"
+    case "${f[0]}" in
+      FETCH) if [[ ${f[2]:-} == ERR ]]; then fetch_err=$((fetch_err + 1)); [[ ${f[3]:-} == *"gh auth setup-git"* ]] && auth_hint=1; fi ;;
+      PRS)   [[ ${f[2]:-} == ERR ]] && prs_err=$((prs_err + 1)) ;;
+      SECTION) [[ ${f[2]:-} == ERR ]] && inbox_errs+=("${f[1]}") ;;
+      GH)    if [[ ${f[1]:-ok} != ok && ${f[1]} != missing && ${f[1]} != missing-scope ]]; then gh_state=${f[1]}; [[ ${f[1]} == rate-limited ]] && { backoff=1; gh_reset=${f[2]:-}; }; fi ;;
+    esac
+  done < <( { (( $# > 0 )) && "$BIN_DIR/omagit-remote" "$@"; (( full )) && "$BIN_DIR/omagit-inbox" fetch "$@"; } {lockfd}>&- )
+
+  t=$(now)
+  if (( backoff )); then
+    parts+=("GitHub rate limit reached")
+    if [[ $gh_reset =~ ^[0-9]+$ ]] && (( gh_reset > t )); then backoff=$gh_reset
+    else backoff=$(( t + (min > 0 ? min : 30) * 60 )); fi
+  else
+    backoff=""
+    [[ -n $gh_state ]] && parts+=("gh $gh_state")
+  fi
+  (( fetch_err )) && parts+=("$fetch_err repo$( ((fetch_err > 1)) && echo s) failed to fetch")
+  (( auth_hint )) && parts+=("check \`gh auth setup-git\`")
+  (( prs_err )) && parts+=("$prs_err repo$( ((prs_err > 1)) && echo s) failed PR lookup")
+  for name in "${inbox_errs[@]}"; do parts+=("inbox $name failed"); done
+  if (( ${#parts[@]} )); then result=err; msg=$(IFS=';'; printf '%s' "${parts[*]}"); msg=${msg//;/; }; else result=ok msg=""; fi
+  msg=$(flat "$msg")
+
+  if (( full )); then
+    S[last_finish]=$t S[last_result]=$result S[last_mode]=$mode S[last_message]=$msg S[backoff_until]=$backoff
+    save_state
+  fi
+  tsv AUTOFETCH "$result" "$msg" "$backoff"
+}
+
+case "${1:-}" in
+  due) cmd_due ;;
+  run) shift; cmd_run "$@" ;;
+  *) die "usage: omagit-autofetch due | run <auto|manual> [--inbox] [<repo>...]" ;;
+esac

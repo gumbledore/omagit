@@ -15,6 +15,12 @@ Item {
 
   required property var panel
   required property var repo
+  property bool highlighted: false
+
+  // Emitted when the row is expanded/collapsed (click or Enter).
+  signal toggled()
+  // True while one of this row's text fields has focus (ReposView blocks shortcuts).
+  readonly property bool textFocused: commitMessageField.activeFocus || commitBranchField.activeFocus || branchField.activeFocus
 
   readonly property string path: repo.path
   readonly property string label: repo.label
@@ -59,16 +65,41 @@ Item {
   }
 
   function toggle() {
+    panel.keyTarget.forceActiveFocus()
+    toggled()
     clearStatus()
     if (expanded) { panel.expandedPath = ""; mode = "" }
     else { panel.expandedPath = path; row.armedMerge = -1 }
+  }
+
+  // Closing a form hides its focused field; hand keys back to the panel.
+  onModeChanged: if (mode === "") panel.keyTarget.forceActiveFocus()
+
+  // Shared by the action buttons and ReposView's single-letter keys.
+  function canTrigger(name) {
+    if (name === "fetch") return !panel.fetching
+    if (name === "diff") return true
+    return !anyBusy
+  }
+
+  function trigger(name) {
+    if (!canTrigger(name)) return
+    if (name === "commit" || name === "branch" || name === "switch" || name === "diff") setMode(name)
+    else if (name === "pr") act("create-pr")
+    else if (name === "ff-main") act("ff-main")
+    else if (name === "fetch") panel.fetchRepos([path])
+    else if (name === "term") act("open-terminal", [label])
+    else if (name === "agent") act("launch-agent", [label])
   }
 
   function setMode(m) {
     if (mode === m) { mode = ""; return }
     mode = m
     if (m === "commit") suggestProcess.running = true
-    else if (m === "branch") branchField.text = String(panel.cfgVal("branchPrefix", "work/")) + Format.isoDate()
+    else if (m === "branch") {
+      branchField.text = String(panel.cfgVal("branchPrefix", "work/")) + Format.isoDate()
+      Qt.callLater(function() { branchField.forceActiveFocus() })
+    }
     else if (m === "switch") branchesProcess.running = true
     else if (m === "diff") { diffText = "Loading diff…"; diffProcess.running = true }
   }
@@ -132,6 +163,17 @@ Item {
          : row.attention ? Util.alpha(row.urgent, 0.10) : "transparent"
     border.width: row.expanded ? 1 : 0
     border.color: Util.alpha(row.fg, 0.15)
+  }
+
+  Rectangle {  // keyboard cursor marker
+    visible: row.highlighted
+    anchors.left: parent.left
+    anchors.top: parent.top
+    anchors.bottom: parent.bottom
+    anchors.margins: Style.space(2)
+    width: Style.space(3)
+    radius: width / 2
+    color: row.accent
   }
 
   MouseArea { anchors.fill: parent; onClicked: row.clearStatus() }  // empty space in the row
@@ -363,21 +405,21 @@ Item {
       Flow {
         Layout.fillWidth: true
         spacing: Style.space(4)
-        Button { text: "Commit"; iconText: "\udb80\udd67"; fontSize: row.capSize; selected: row.mode === "commit"; enabled: !row.anyBusy; tooltipText: "Stage all, commit, push"; onClicked: row.setMode("commit") }
-        Button { text: "Branch"; iconText: "\udb81\ude2c"; fontSize: row.capSize; selected: row.mode === "branch"; enabled: !row.anyBusy; tooltipText: "New branch"; onClicked: row.setMode("branch") }
-        Button { text: "Switch"; iconText: "\udb81\udce1"; fontSize: row.capSize; selected: row.mode === "switch"; enabled: !row.anyBusy; tooltipText: "Switch branch"; onClicked: row.setMode("switch") }
-        Button { text: "PR"; iconText: "\udb80\udea4"; fontSize: row.capSize; enabled: !row.anyBusy; tooltipText: row.onMain ? "Refused on " + row.branch : "Push and open the PR form"; onClicked: row.act("create-pr") }
-        Button { text: "FF main"; iconText: "\udb80\ude11"; fontSize: row.capSize; enabled: !row.anyBusy; tooltipText: "Fast-forward the default branch"; onClicked: row.act("ff-main") }
-        Button { text: "Fetch"; iconText: "\udb80\uddda"; fontSize: row.capSize; enabled: !row.panel.fetching; tooltipText: "git fetch + open PRs"; onClicked: row.panel.fetchRepos([row.path]) }
-        Button { text: "Diff"; iconText: "\udb80\ude19"; fontSize: row.capSize; selected: row.mode === "diff"; tooltipText: "Read-only diff"; onClicked: row.setMode("diff") }
-        Button { text: "Term"; iconText: "\udb80\udd8d"; fontSize: row.capSize; enabled: !row.anyBusy; tooltipText: row.panel.launcher === "herdr" ? "herdr workspace" : "Terminal here"; onClicked: row.act("open-terminal", [row.label]) }
+        Button { text: "Commit"; iconText: "\udb80\udd67"; fontSize: row.capSize; selected: row.mode === "commit"; enabled: row.canTrigger("commit"); tooltipText: "Stage all, commit, push (c)"; onClicked: row.trigger("commit") }
+        Button { text: "Branch"; iconText: "\udb81\ude2c"; fontSize: row.capSize; selected: row.mode === "branch"; enabled: row.canTrigger("branch"); tooltipText: "New branch (b)"; onClicked: row.trigger("branch") }
+        Button { text: "Switch"; iconText: "\udb81\udce1"; fontSize: row.capSize; selected: row.mode === "switch"; enabled: row.canTrigger("switch"); tooltipText: "Switch branch (s)"; onClicked: row.trigger("switch") }
+        Button { text: "PR"; iconText: "\udb80\udea4"; fontSize: row.capSize; enabled: row.canTrigger("pr"); tooltipText: (row.onMain ? "Refused on " + row.branch : "Push and open the PR form") + " (p)"; onClicked: row.trigger("pr") }
+        Button { text: "FF main"; iconText: "\udb80\ude11"; fontSize: row.capSize; enabled: row.canTrigger("ff-main"); tooltipText: "Fast-forward the default branch (m)"; onClicked: row.trigger("ff-main") }
+        Button { text: "Fetch"; iconText: "\udb80\uddda"; fontSize: row.capSize; enabled: row.canTrigger("fetch"); tooltipText: "git fetch + open PRs (u)"; onClicked: row.trigger("fetch") }
+        Button { text: "Diff"; iconText: "\udb80\ude19"; fontSize: row.capSize; selected: row.mode === "diff"; tooltipText: "Read-only diff (d)"; onClicked: row.trigger("diff") }
+        Button { text: "Term"; iconText: "\udb80\udd8d"; fontSize: row.capSize; enabled: row.canTrigger("term"); tooltipText: (row.panel.launcher === "herdr" ? "herdr workspace" : "Terminal here") + " (t)"; onClicked: row.trigger("term") }
         Button {
           text: row.panel.agentName !== "" ? row.panel.agentName : "agent"
           iconText: "\udb81\udea9"
           fontSize: row.capSize
-          enabled: !row.anyBusy
-          tooltipText: row.panel.agentName !== "" ? "Launch " + row.panel.agentName + " here" : "No default agent set"
-          onClicked: row.act("launch-agent", [row.label])
+          enabled: row.canTrigger("agent")
+          tooltipText: (row.panel.agentName !== "" ? "Launch " + row.panel.agentName + " here" : "No default agent set") + " (g)"
+          onClicked: row.trigger("agent")
         }
       }
 
@@ -390,6 +432,7 @@ Item {
           id: commitMessageField
           Layout.fillWidth: true
           placeholderText: "Commit message"
+          Keys.onEscapePressed: row.panel.keyTarget.forceActiveFocus()
           font.family: row.fontFamily
           font.pixelSize: row.bodySize
           onAccepted: row.submitCommit()
@@ -401,6 +444,7 @@ Item {
             id: commitBranchField
             Layout.fillWidth: true
             placeholderText: "Target branch"
+            Keys.onEscapePressed: row.panel.keyTarget.forceActiveFocus()
             enabled: !commitMainToggle.checked
             opacity: enabled ? 1 : 0.4
             font.family: row.fontFamily
@@ -426,6 +470,7 @@ Item {
           id: branchField
           Layout.fillWidth: true
           placeholderText: "Branch name"
+          Keys.onEscapePressed: row.panel.keyTarget.forceActiveFocus()
           font.family: row.fontFamily
           font.pixelSize: row.bodySize
           onAccepted: { if (row.act("new-branch", [text.trim()])) row.mode = "" }

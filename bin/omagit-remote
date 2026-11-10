@@ -1,11 +1,14 @@
 #!/bin/bash
 # omagit-remote <repo>...: fetch + open-PR lookup, three repos at a time.
-# Only runs when the user asks (Fetch all / per-repo fetch); nothing here is
-# ever scheduled.
+# Run by the Fetch buttons and the background auto-fetch (via omagit-autofetch).
+# Only updates remote-tracking refs and reads GitHub; never touches a working tree.
 #
 #   FETCH  repo  OK|ERR|SKIP  message
 #   PR     repo  number  title  url  ci(passing|failing|pending|none)  head
 #   PRS    repo  OK|ERR|SKIP  message
+#   GH     state(ok|missing|logged-out|rate-limited)  reset_epoch  message
+#          first record, only when a repo has a github.com origin; when state
+#          is not ok, PRS is SKIP "gh <state>" instead of a per-row error
 #   DONE   repo
 
 source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/../lib/common.sh"
@@ -19,8 +22,10 @@ ROLLUP='
       else "passing" end;
   .[] | [.number, .title, .url, ci, .headRefName] | @tsv'
 
+AUTH_RE='Authentication failed|could not read Username|terminal prompts disabled|Permission denied \(publickey\)'
+
 one_repo() {
-  local repo=$1 out rc line
+  local repo=$1 out rc line st
   if [[ -z $(git -C "$repo" remote 2>/dev/null) ]]; then
     tsv FETCH "$repo" SKIP "no remote"
     tsv PRS "$repo" SKIP "no remote"
@@ -28,16 +33,35 @@ one_repo() {
     return
   fi
   out=$(with_timeout git -C "$repo" fetch -q --prune origin 2>&1); rc=$?
-  if (( rc == 0 )); then tsv FETCH "$repo" OK "fetched"; else tsv FETCH "$repo" ERR "${out:-fetch failed (exit $rc)}"; fi
+  if (( rc == 0 )); then
+    tsv FETCH "$repo" OK "fetched"
+  else
+    if is_github "$repo" && grep -qE "$AUTH_RE" <<<"$out"; then
+      out+=" (check \`gh auth setup-git\`: the gh credential helper is pinned to the gh version, rerun it after a gh upgrade)"
+    fi
+    tsv FETCH "$repo" ERR "${out:-fetch failed (exit $rc)}"
+  fi
 
-  if ! git -C "$repo" config --get remote.origin.url 2>/dev/null | grep -q "github\.com"; then
+  if ! is_github "$repo"; then
     tsv PRS "$repo" SKIP "not a GitHub remote"
+    tsv DONE "$repo"
+    return
+  fi
+  if [[ ${OMAGIT_GH_STATE:-ok} != ok ]]; then
+    tsv PRS "$repo" SKIP "gh $OMAGIT_GH_STATE"
     tsv DONE "$repo"
     return
   fi
   out=$(cd "$repo" && with_timeout gh pr list --state open --limit "$(setting ghPrLimit)" \
         --json number,title,url,headRefName,statusCheckRollup 2>&1); rc=$?
   if (( rc != 0 )); then
+    st=$(gh_classify_error "$out")
+    if [[ -n $st ]]; then
+      tsv GH "$st" "" "gh $st"
+      tsv PRS "$repo" SKIP "gh $st"
+      tsv DONE "$repo"
+      return
+    fi
     tsv PRS "$repo" ERR "${out:-gh failed (exit $rc)}"
     tsv DONE "$repo"
     return
@@ -57,4 +81,13 @@ one_repo() {
 
 if [[ ${1:-} == --one ]]; then one_repo "$2"; exit 0; fi
 [[ $# -gt 0 ]] || die "usage: omagit-remote <repo>..."
+OMAGIT_GH_STATE=ok
+for r in "$@"; do
+  if is_github "$r"; then
+    rec=$(gh_status); printf '%s\n' "$rec"
+    OMAGIT_GH_STATE=$(cut -f2 <<<"$rec")
+    break
+  fi
+done
+export OMAGIT_GH_STATE
 printf '%s\0' "$@" | xargs -0 -P 3 -n 1 "$(realpath -- "${BASH_SOURCE[0]}")" --one

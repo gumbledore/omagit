@@ -8,8 +8,10 @@
 #   untrack <repo>           explicit repo -> removed; discovered repo -> excluded
 #   untrack-root <dir>       stop tracking a root and everything under it
 #   discover                 TSV: path<TAB>label<TAB>root<TAB>kind(root|repo)
+#   ui-get <key>             print a remembered UI value (empty if unset)
+#   ui-set <key> <value>     remember it; key is [a-z-]+, stored in $OMAGIT_CACHE_DIR/ui.state
 #
-# Nothing here touches anything outside ~/.config/gumbledore.omagit.
+# Nothing here touches anything outside ~/.config/gumbledore.omagit and the cache dir.
 
 source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/../lib/common.sh"
 
@@ -122,7 +124,34 @@ cmd_discover() {
   } | sort -t$'\t' -k1,1 -u | grep -v -F -f <(jq -r '.excluded[] | . + "\t"' <<<"$t"; echo $'\x01') || true
 }
 
+UI_FILE="$OMAGIT_CACHE_DIR/ui.state"
+
+ui_key() { [[ ${1:-} =~ ^[a-z-]+$ ]] || die "invalid ui key: ${1:-}"; }
+
+cmd_ui_get() {
+  local k v
+  ui_key "${1:-}"
+  [[ -f $UI_FILE ]] || return 0
+  while IFS='=' read -r k v; do [[ $k == "$1" ]] && { printf '%s\n' "$v"; return 0; }; done < "$UI_FILE"
+  return 0
+}
+
+cmd_ui_set() {
+  local key=${1:-} val=${2:-} k v
+  ui_key "$key"
+  val=${val//$'\n'/ }; val=${val//$'\r'/}; val=${val//$'\t'/ }
+  mkdir -p "$OMAGIT_CACHE_DIR"
+  {
+    if [[ -f $UI_FILE ]]; then
+      while IFS='=' read -r k v; do [[ -n $k && $k != "$key" ]] && printf '%s=%s\n' "$k" "$v"; done < "$UI_FILE"
+    fi
+    printf '%s=%s\n' "$key" "$val"
+  } > "$UI_FILE.tmp" && mv -f "$UI_FILE.tmp" "$UI_FILE"
+}
+
 case "${1:-}" in
+  ui-get) cmd_ui_get "${2:-}" ;;
+  ui-set) cmd_ui_set "${2:-}" "${3:-}" ;;
   settings) cmd_settings ;;
   tracking) cmd_tracking ;;
   add-root) cmd_add_root "${2:-}" ;;
@@ -130,5 +159,5 @@ case "${1:-}" in
   untrack) cmd_untrack "${2:-}" ;;
   untrack-root) cmd_untrack_root "${2:-}" ;;
   discover) cmd_discover ;;
-  *) die "usage: omagit-config settings|tracking|add-root|add-repo|untrack|untrack-root|discover" ;;
+  *) die "usage: omagit-config settings|tracking|add-root|add-repo|untrack|untrack-root|discover|ui-get|ui-set" ;;
 esac

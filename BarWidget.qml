@@ -4,7 +4,8 @@ import qs.Commons
 import qs.Ui
 
 // Bar entry for omagit: a git-branch glyph with an attention badge (repos that
-// are dirty, ahead, or behind; hidden at zero). The panel is loaded eagerly so
+// are dirty, ahead, or behind; hidden at zero) and an accent dot (bottom-right)
+// when the inbox has unread notifications, review requests, or failing CI on my PRs. The panel is loaded eagerly so
 // the watcher runs and the badge stays live while the popup is closed.
 BarWidget {
   id: root
@@ -21,6 +22,7 @@ BarWidget {
 
   property var panelItem: null
   readonly property int attention: panelItem ? panelItem.attentionCount : 0
+  readonly property bool inboxAttention: panelItem ? panelItem.inboxAttention === true : false
 
   function injectPanel() {
     var target = panelLoader.item
@@ -65,12 +67,24 @@ BarWidget {
     text: "\udb81\ude2c"
     active: root.attention > 0
     useActiveColor: false
-    tooltipText: root.attention > 0
+    tooltipText: (root.attention > 0
       ? root.attention + " repo" + (root.attention === 1 ? "" : "s") + " need attention"
-      : "omagit"
+      : "omagit") + (root.inboxAttention ? " \u00b7 inbox has items for you" : "")
     onPressed: function(b) {
       if (b === Qt.LeftButton) root.togglePanel()
       else if (b === Qt.RightButton) root.refresh()
+    }
+
+    Rectangle {  // inbox accent dot
+      visible: root.inboxAttention
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      anchors.rightMargin: root.vertical ? Style.space(3) : Style.space(1)
+      anchors.bottomMargin: Style.space(3)
+      width: Style.space(5)
+      height: width
+      radius: width / 2
+      color: Color.accent
     }
 
     Rectangle {

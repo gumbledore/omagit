@@ -19,6 +19,8 @@ Panel {
   manageIpc: false
 
   property var anchorItem: null
+  // Where keys go when no text field is editing (views hand focus back here).
+  readonly property Item keyTarget: keyCatcher
   property var hostWidget: null
   readonly property var barIdentity: hostWidget || root
 
@@ -42,6 +44,7 @@ Panel {
     return v === undefined || v === null ? fallback : v
   }
   readonly property string launcher: String(cfgVal("launcher", "native"))
+  readonly property string linkBehavior: String(cfgVal("linkBehavior", "browser"))
   readonly property int debounceMs: Math.max(100, Number(cfgVal("debounceMs", 500)) || 500)
   readonly property int fallbackSeconds: Math.max(30, Number(cfgVal("fallbackRefreshSeconds", 300)) || 300)
 
@@ -98,10 +101,99 @@ Panel {
     return n
   }
 
+  // ---- inbox (account-wide; cached output shown first, live fetch swaps in on INBOXDONE) ----
+  property var inbox: Format.emptyInbox()
+  property var inboxBuffer: []
+  property string tab: "repos"   // "repos" | "inbox"; remembered via omagit-config ui-set
+  readonly property var currentView: root.tab === "inbox" ? inboxView : reposView
+
+  function sectionItems(name) {
+    var sec = root.inbox.sections[name]
+    return sec ? sec.items : []
+  }
+  readonly property int inboxCount: {
+    var n = 0
+    for (var k in root.inbox.sections) n += root.inbox.sections[k].items.length
+    return n
+  }
+  readonly property int inboxUnreadCount: root.sectionItems("notifications").length
+  readonly property int inboxReviewCount: root.sectionItems("reviews").length
+  readonly property int inboxFailingPrCount: root.sectionItems("prs").filter(function(i) { return i.ci === "failing" }).length
+
+  readonly property bool inboxAttention: inboxUnreadCount > 0 || inboxReviewCount > 0 || inboxFailingPrCount > 0
+
+  // Inbox -> local clone: explicit key/button only (checkout refuses a dirty tree).
+  function checkoutPr(localPath, number) { return root.runAction(localPath, "checkout-pr", [String(number)]) }
+  function jumpToRepo(localPath) {
+    root.setTab("repos")
+    root.expandedPath = localPath
+    reposView.reveal(localPath)
+  }
+
+  function setTab(name) {
+    if (name === root.tab) return
+    root.tab = name
+    Quickshell.execDetached([root.binDir + "/omagit-config", "ui-set", "tab", name])
+  }
+
+  property Process tabProcess: Process {
+    command: [root.binDir + "/omagit-config", "ui-get", "tab"]
+    stdout: StdioCollector { id: tabOut; waitForEnd: true }
+    onExited: function(exitCode) { if (String(tabOut.text).trim() === "inbox") root.tab = "inbox" }
+  }
+
+  // mark-read / mark-all: one omagit-inbox action at a time
+  property string inboxMessage: ""
+  property var inboxPendingIds: []
+  property Process inboxActionProcess: Process {
+    stdout: StdioCollector { id: inboxActionOut; waitForEnd: true }
+    onExited: function(exitCode) {
+      var res = null
+      var recs = Format.splitRecords(inboxActionOut.text)
+      for (var i = 0; i < recs.length; i++) if (recs[i][0] === "RESULT") res = recs[i]
+      if (res && res[1] === "OK") {
+        root.inbox = Format.withoutNotifications(root.inbox, root.inboxPendingIds)
+        root.inboxMessage = ""
+      } else {
+        root.inboxMessage = res ? (res[2] || "action failed") : "action failed"
+      }
+      root.inboxPendingIds = []
+    }
+  }
+
+  function markNotificationRead(id) {
+    if (root.inboxActionProcess.running) return
+    root.inboxPendingIds = [id]
+    root.inboxActionProcess.command = [root.binDir + "/omagit-inbox", "mark-read", String(id)]
+    root.inboxActionProcess.running = true
+  }
+
+  function markAllNotificationsRead() {
+    if (root.inboxActionProcess.running) return
+    var shown = root.sectionItems("notifications")
+    if (shown.length === 0) return
+    var args = Format.markAllArgs(shown)
+    root.inboxPendingIds = shown.filter(function(n) { return n.updatedAt <= args.timestamp }).map(function(n) { return n.id })
+    root.inboxActionProcess.command = [root.binDir + "/omagit-inbox", "mark-all", args.timestamp].concat(args.ids)
+    root.inboxActionProcess.running = true
+  }
+
+  property Process inboxCacheProcess: Process {
+    command: [root.binDir + "/omagit-inbox", "cached"]
+    stdout: StdioCollector { id: inboxCacheOut; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (root.inbox.fetchedAt > 0) return   // a live fetch already landed
+      var parsed = Format.parseInbox(Format.splitRecords(inboxCacheOut.text))
+      if (parsed.fetchedAt > 0) root.inbox = parsed
+    }
+  }
+
   readonly property string headerSummary: {
     var parts = [root.repos.length + " repo" + (root.repos.length === 1 ? "" : "s")]
     if (root.attentionCount > 0) parts.push(root.attentionCount + " need attention")
     parts.push(Format.ago(root.lastFetchMs, root.nowMs))
+    var af = Format.autoFetchLine(root.autoStatus)
+    if (af !== "") parts.push(af)
     return parts.join(" · ")
   }
 
@@ -136,6 +228,7 @@ Panel {
         root.repos = list
         root.restartWatcher()
       }
+      if (!root.catchUpDone) { root.catchUpDone = true; root.checkAutoFetch() }
       var paths = list.map(function(r) { return r.path })
       root.requestRead(paths)
       root.refreshHerdr()
@@ -254,6 +347,8 @@ Panel {
   onOpenedChanged: {
     root.uninstallArmed = false
     if (root.opened) {
+      reposView.resetCursor()
+      inboxView.resetCursor()
       root.refreshHerdr()
       root.nowMs = Date.now()
       agentNameProcess.running = true
@@ -284,34 +379,107 @@ Panel {
     onExited: function(exitCode) { root.agentName = String(agentNameOut.text || "").trim() }
   }
 
-  // ---- remote (manual only) ---------------------------------------------------
+  // ---- remote (Fetch buttons + background auto-fetch) ---------------------------
   property var prBuffer: ({})
+  property var ghStatus: ({ state: "ok", reset: 0, message: "" })
+  property string fetchMode: "manual"   // mode of the run in progress; auto failures stay quiet
+  property var autoStatus: ({ ok: true, finish: 0, mode: "", message: "", next: 0 })
+  property bool catchUpDone: false
+  property bool fetchBusy: false
 
-  function fetchRepos(paths) {
-    if (root.fetching || paths.length === 0) return
+  // All fetches go through omagit-autofetch so its lock covers manual ones too.
+  // `full` adds the account-wide inbox (omagit-autofetch --inbox) and counts as the scheduled run.
+  function fetchRepos(paths, mode, full) {
+    if (root.fetching || (!full && paths.length === 0)) return
     root.fetching = true
+    root.fetchMode = mode || "manual"
     root.prBuffer = {}
-    remoteProcess.command = [root.binDir + "/omagit-remote"].concat(paths)
+    root.inboxBuffer = []
+    if (full) root.ghStatus = { state: "ok", reset: 0, message: "" }
+    remoteProcess.command = [root.binDir + "/omagit-autofetch", "run", root.fetchMode].concat(full ? ["--inbox"] : [], paths)
     remoteProcess.running = true
   }
 
-  function fetchAll() { root.fetchRepos(root.repos.map(function(r) { return r.path })) }
+  function allPaths() { return root.repos.map(function(r) { return r.path }) }
+
+  // ---- auto-fetch: the helper decides, the timer only polls -------------------
+  function checkAutoFetch() {
+    if (root.fetching || dueProcess.running || actionProcess.running) return   // don't race a user action's own fetch
+    dueProcess.running = true
+  }
+
+  property Process dueProcess: Process {
+    command: [root.binDir + "/omagit-autofetch", "due"]
+    stdout: StdioCollector { id: dueOut; waitForEnd: true }
+    onExited: function(exitCode) {
+      var recs = Format.splitRecords(dueOut.text)
+      var yes = false
+      var a = Object.assign({}, root.autoStatus)
+      for (var i = 0; i < recs.length; i++) {
+        var r = recs[i]
+        if (r[0] === "DUE") {
+          yes = r[1] === "yes"
+          a.next = parseInt(r[3]) || 0
+        } else if (r[0] === "LAST") {
+          var fin = parseInt(r[1]) || 0
+          a.finish = fin; a.ok = r[2] !== "err"; a.mode = r[3] || ""; a.message = r[4] || ""
+          if (fin * 1000 > root.lastFetchMs) root.lastFetchMs = fin * 1000
+        }
+      }
+      root.autoStatus = a
+      if (yes && !root.fetching) root.fetchRepos(root.allPaths(), "auto", true)
+    }
+  }
+
+  property Timer autoFetchTimer: Timer {
+    interval: 60000
+    repeat: true
+    running: true
+    onTriggered: root.checkAutoFetch()
+  }
+
+  function fetchAll() { root.fetchRepos(root.allPaths(), "manual", true) }
 
   property Process remoteProcess: Process {
     stdout: SplitParser { onRead: function(line) { root.applyRemoteLine(String(line)) } }
     onExited: function(exitCode) {
       root.fetching = false
+      if (root.fetchBusy) { root.fetchBusy = false; return }   // another fetch held the lock
       root.lastFetchMs = Date.now()
       root.nowMs = root.lastFetchMs
+      root.checkAutoFetch()   // refresh the retry time shown in the header
     }
   }
 
   function applyRemoteLine(line) {
     var r = line.split("\t")
+    if (r[0] === "BUSY") { root.fetchBusy = true; return }
     if (r.length < 2) return
+    if (r[0] === "GH") {
+      if (r[1] !== "ok") root.ghStatus = { state: r[1], reset: parseInt(r[2]) || 0, message: r[3] || "" }
+      else if (root.ghStatus.state !== "missing-scope") root.ghStatus = { state: "ok", reset: 0, message: "" }
+      return
+    }
+    if (r[0] === "AUTOFETCH") {
+      root.autoStatus = { ok: r[1] === "ok", finish: Math.round(Date.now() / 1000), mode: root.fetchMode,
+                          message: r[2] || "", next: parseInt(r[3]) || 0 }
+      return
+    }
+    if (r[0] === "LOGIN" || r[0] === "NOTIF" || r[0] === "REVIEW" || r[0] === "MYPR" || r[0] === "ISSUE" || r[0] === "RUN" || r[0] === "SECTION") {
+      root.inboxBuffer.push(r)
+      return
+    }
+    if (r[0] === "INBOXDONE") {   // omagit-remote's own DONE carries a repo path instead
+      root.inbox = Format.mergeInbox(root.inbox, Format.parseInbox(root.inboxBuffer.concat([r])), root.fetchMode === "auto")
+      root.inboxBuffer = []
+      root.inboxMessage = ""
+      return
+    }
     var path = r[1]
     var rs = root.remoteStatus[path] ? Object.assign({}, root.remoteStatus[path]) : {}
+    var quiet = root.fetchMode === "auto"
     if (r[0] === "FETCH") {
+      if (quiet && r[2] === "ERR") return
       rs.fetch = r[2]; rs.fetchMsg = r[3] || ""
       root.setMap("remoteStatus", path, rs)
     } else if (r[0] === "PR" && r.length >= 7) {
@@ -319,6 +487,7 @@ Panel {
       buf.push({ number: parseInt(r[2]) || 0, title: r[3], url: r[4], ci: r[5], head: r[6] })
       root.prBuffer[path] = buf
     } else if (r[0] === "PRS") {
+      if (quiet && r[2] === "ERR") return
       rs.prs = r[2]; rs.prsMsg = r[3] || ""
       root.setMap("remoteStatus", path, rs)
       if (r[2] === "OK") root.setMap("prs", path, root.prBuffer[path] || [])
@@ -396,8 +565,9 @@ Panel {
 
   function openUrl(url) {
     var u = String(url || "")
-    if (!/^https?:\/\//.test(u)) return
-    if (!Qt.openUrlExternally(u)) Quickshell.execDetached(["xdg-open", u])
+    if (!/^https:\/\//.test(u)) return
+    if (root.linkBehavior === "webapp") Quickshell.execDetached(["omarchy-launch-webapp", u])
+    else if (!Qt.openUrlExternally(u)) Quickshell.execDetached(["xdg-open", u])
   }
 
   // ---- uninstall ---------------------------------------------------------------------
@@ -411,7 +581,11 @@ Panel {
       'setsid nohup bash -c \'rm -rf "$HOME/.config/gumbledore.omagit"; omarchy plugin remove gumbledore.omagit --yes\' >/dev/null 2>&1 &'])
   }
 
-  Component.onCompleted: settingsBootstrap.running = true
+  Component.onCompleted: {
+    settingsBootstrap.running = true
+    tabProcess.running = true
+    inboxCacheProcess.running = true
+  }
   Component.onDestruction: { if (watchProcess.running) watchProcess.signal(15) }
 
   // ================================================================== UI
@@ -428,7 +602,19 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      onCloseRequested: root.close()
+      blocked: root.currentView.textFocused
+      onMoveRequested: function(dx, dy) { if (dy !== 0) root.currentView.moveCursor(dy) }
+      onActivateRequested: root.currentView.activate()
+      onCloseRequested: { if (!root.currentView.handleEscape()) root.close() }
+      onTabRequested: function(direction) { root.setTab(root.tab === "repos" ? "inbox" : "repos") }
+      onTextKey: function(t, modifiers) {
+        if (modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) return
+        if (t === "1") root.setTab("repos")
+        else if (t === "2") root.setTab("inbox")
+        else if (t === "r") root.refreshAll()
+        else if (t === "f") root.fetchAll()
+        else root.currentView.handleKey(t)
+      }
     }
 
     ColumnLayout {
@@ -470,19 +656,20 @@ Panel {
           text: root.fetching ? "Fetching…" : "Fetch all"
           iconText: "\udb80\uddda"
           iconSpinning: root.fetching
-          enabled: !root.fetching && root.repos.length > 0
-          tooltipText: "git fetch + open PRs for every repo"
+          enabled: !root.fetching
+          tooltipText: "git fetch + open PRs for every repo, and your GitHub inbox (f)"
           onClicked: root.fetchAll()
         }
         PanelActionButton {
           iconText: "\udb81\udc50"
-          tooltipText: "Refresh (re-scan roots, re-read all repos)"
+          tooltipText: "Refresh (re-scan roots, re-read all repos) (r)"
           onClicked: root.refreshAll()
         }
         PanelActionButton {
+          visible: root.tab === "repos"
           iconText: "\udb81\udc15"
-          tooltipText: addForm.visible ? "Hide tracking" : "Add root / repo, manage tracking"
-          onClicked: addForm.visible = !addForm.visible
+          tooltipText: reposView.addFormVisible ? "Hide tracking" : "Add root / repo, manage tracking"
+          onClicked: reposView.addFormVisible = !reposView.addFormVisible
         }
         PanelActionButton {
           iconText: "\udb81\udc93"
@@ -491,93 +678,54 @@ Panel {
         }
       }
 
-      // ---------------------------------------------------------- add / tracking
-      ColumnLayout {
-        id: addForm
-        visible: false
-        Layout.fillWidth: true
-        spacing: Style.space(4)
-
-        RowLayout {
-          Layout.fillWidth: true
-          spacing: Style.space(6)
-          TextField {
-            id: addField
-            Layout.fillWidth: true
-            placeholderText: "~/projects or ~/Work/foo"
-            font.family: root.fontFamily
-            onAccepted: { root.trackPath("root", text); text = "" }
-          }
-          Button { text: "Add root"; onClicked: { root.trackPath("root", addField.text); addField.text = "" } }
-          Button { text: "Add repo"; onClicked: { root.trackPath("repo", addField.text); addField.text = "" } }
-        }
-        Repeater {
-          model: root.tracking.roots || []
-          delegate: RowLayout {
-            required property string modelData
-            Layout.fillWidth: true
-            spacing: Style.space(6)
-            Text {
-              Layout.fillWidth: true
-              text: "root  " + modelData
-              color: root.muted
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              elide: Text.ElideMiddle
-            }
-            PanelActionButton {
-              iconText: "\udb80\udd56"
-              size: Style.space(18)
-              tooltipText: "Stop tracking this root and everything under it"
-              onClicked: root.untrackRoot(modelData)
-            }
-          }
-        }
-        Text {
-          visible: root.headerMessage !== ""
-          Layout.fillWidth: true
-          text: root.headerMessage + "  ✕"
-          color: root.urgent
-          wrapMode: Text.Wrap
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.headerMessage = "" }
-        }
-      }
-
-      PanelSeparator { Layout.fillWidth: true }
-
-      // ------------------------------------------------------------- repo list
       Text {
-        visible: root.repos.length === 0
+        visible: Format.ghBanner(root.ghStatus) !== ""
         Layout.fillWidth: true
-        Layout.topMargin: Style.space(8)
-        Layout.bottomMargin: Style.space(8)
-        text: root.discovering ? "Scanning…" : "No repos tracked yet. Use \udb81\udc15 to add a scan root or a single repo."
-        color: root.muted
+        text: Format.ghBanner(root.ghStatus)
+        color: root.urgent
         wrapMode: Text.Wrap
         font.family: root.fontFamily
-        font.pixelSize: Style.font.body
+        font.pixelSize: Style.font.caption
       }
 
-      ListView {
-        id: list
+      // ---------------------------------------------------------------- tabs (Tab / 1 / 2)
+      RowLayout {
+        Layout.fillWidth: true
+        spacing: Style.space(6)
+        Button {
+          text: "Repos" + (root.attentionCount > 0 ? " \u00b7 " + root.attentionCount : "")
+          fontSize: Style.font.caption
+          bordered: true
+          selected: root.tab === "repos"
+          tooltipText: "Repos (1)"
+          onClicked: root.setTab("repos")
+        }
+        Button {
+          text: "Inbox" + (root.inboxCount > 0 ? " \u00b7 " + root.inboxCount : "")
+          fontSize: Style.font.caption
+          bordered: true
+          selected: root.tab === "inbox"
+          tooltipText: "Notifications, review requests, your PRs and issues, Actions (2)"
+          onClicked: root.setTab("inbox")
+        }
+        Item { Layout.fillWidth: true }
+      }
+
+      // ---------------------------------------------------------------- views (both stay instantiated)
+      OmagitPanel.ReposView {
+        id: reposView
+        visible: root.tab === "repos"
+        panel: root
         Layout.fillWidth: true
         Layout.fillHeight: true
-        Layout.minimumHeight: Math.min(contentHeight, Style.space(120))
-        implicitHeight: contentHeight
-        clip: true
-        spacing: Style.space(2)
-        cacheBuffer: 10000
-        boundsBehavior: Flickable.StopAtBounds
-        model: root.repos
+      }
 
-        delegate: OmagitPanel.RepoRow {
-          required property var modelData
-          width: list.width
-          panel: root
-          repo: modelData
-        }
+      OmagitPanel.InboxView {
+        id: inboxView
+        visible: root.tab === "inbox"
+        panel: root
+        Layout.fillWidth: true
+        Layout.fillHeight: true
       }
 
       PanelSeparator { Layout.fillWidth: true }

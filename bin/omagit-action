@@ -13,6 +13,7 @@
 #   branches <repo>                   BRANCH<TAB>name<TAB>current(0|1)
 #   create-pr <repo>                  refuse on main; push -u; gh pr create --web
 #   merge-pr <repo> <number>          gh pr merge (settings strategy), then ff-main, prune-gone
+#   checkout-pr <repo> <number>       refuse on dirty tree; gh pr checkout in the clone
 #   ff-main <repo>                    pull --ff-only or fetch def:def; diverged -> ERR
 #   prune-gone <repo>                 fetch --prune, delete local branches whose upstream is gone
 #   open-file <repo> <file>           openFileCommand <abs path>
@@ -28,7 +29,6 @@ ok() { tsv RESULT OK "$*"; exit 0; }
 err() { tsv RESULT ERR "$*"; exit 1; }
 
 has_remote() { [[ -n $(git -C "$1" remote 2>/dev/null) ]]; }
-is_github() { git -C "$1" config --get remote.origin.url 2>/dev/null | grep -q "github\.com"; }
 is_dirty() { [[ -n $(git -C "$1" status --porcelain --untracked-files=all 2>/dev/null) ]]; }
 has_head() { git -C "$1" rev-parse -q --verify HEAD >/dev/null 2>&1; }
 branch_exists() { git -C "$1" show-ref -q --verify "refs/heads/$2" 2>/dev/null; }
@@ -45,9 +45,14 @@ fresh_branch() {
   printf '%s\n' "$name"
 }
 
+# https only; linkBehavior "webapp" opens an app window instead of a browser tab.
 open_url() {
-  [[ $1 =~ ^https?:// ]] || return 1
-  setsid -f xdg-open "$1" >/dev/null 2>&1
+  [[ $1 =~ ^https:// ]] || return 1
+  if [[ $(setting linkBehavior) == webapp ]]; then
+    setsid -f omarchy-launch-webapp "$1" >/dev/null 2>&1
+  else
+    setsid -f xdg-open "$1" >/dev/null 2>&1
+  fi
 }
 
 # ------------------------------------------------------------------ diff
@@ -278,6 +283,15 @@ cmd_merge_pr() {
   ok "$msg"
 }
 
+cmd_checkout_pr() {
+  local repo=$1 num=$2
+  [[ $num =~ ^[0-9]+$ ]] || err "Invalid PR number"
+  is_github "$repo" || err "origin is not a GitHub remote"
+  is_dirty "$repo" && err "working tree is dirty — commit or stash first"
+  ( cd "$repo" && run gh pr checkout "$num" ) || err "Checkout of PR #$num failed"
+  ok "checked out PR #$num"
+}
+
 # ------------------------------------------------------------------ launchers
 cmd_open_file() {
   local repo=$1 file=$2 abs cmd parts
@@ -328,6 +342,7 @@ case "$verb" in
   branches) cmd_branches "$repo" ;;
   create-pr) cmd_create_pr "$repo" ;;
   merge-pr) cmd_merge_pr "$repo" "${3:-}" ;;
+  checkout-pr) cmd_checkout_pr "$repo" "${3:-}" ;;
   ff-main) cmd_ff_main "$repo" ;;
   prune-gone) cmd_prune_gone "$repo" ;;
   open-file) cmd_open_file "$repo" "${3:-}" ;;
