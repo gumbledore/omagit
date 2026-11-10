@@ -12,6 +12,7 @@ import "Format.js" as Format
 // keys (Panel's PanelKeyCatcher delegates here; r / f / 1 / 2 / Tab are Panel's):
 //   j k Up Down  move the highlight      Enter / Space  open the item in the browser
 //   m  mark the highlighted notification read (Enter on a notification opens + marks it)
+//   PR / review request in a tracked repo:  c  checkout locally   o  show the repo in Repos
 // A later ticket adds a section by appending to `sectionDefs` and, for row-scoped
 // keys, handling them in handleKey() against `cursorItem` (return true when handled).
 ColumnLayout {
@@ -43,7 +44,18 @@ ColumnLayout {
     if (it) openItem(it)
   }
 
+  // PRs and review requests whose repo is tracked locally.
+  function hasLocalPr(it) { return !!it && (it.kind === "pr" || it.kind === "review") && it.localPath !== "" }
+
+  property string checkoutKey: ""   // item whose checkout was last requested
+
+  function checkout(it) {
+    if (panel.checkoutPr(it.localPath, it.number)) checkoutKey = itemKey(it)
+  }
+
   function handleKey(text) {
+    if (text === "c" && hasLocalPr(cursorItem)) { checkout(cursorItem); return true }
+    if (text === "o" && hasLocalPr(cursorItem)) { panel.jumpToRepo(cursorItem.localPath); return true }
     if (text === "m" && cursorItem && cursorItem.kind === "notification") {
       panel.markNotificationRead(cursorItem.id)
       return true
@@ -262,6 +274,35 @@ ColumnLayout {
           color: view.panel.accent
           font.family: view.panel.fontFamily
           font.pixelSize: Style.font.caption
+        }
+        Text {  // checkout status for the PR last checked out
+          readonly property var st: entry.it && view.checkoutKey === entry.modelData.key
+            ? view.panel.rowStatus[entry.it.localPath] : null
+          visible: !!st && st.verb === "checkout-pr"
+          text: !st ? "" : st.busy ? "checking out\u2026" : st.message
+          color: !st ? view.panel.muted : st.busy ? view.panel.muted : st.ok ? view.panel.accent : view.panel.urgent
+          font.family: view.panel.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+        PanelActionButton {  // PR / review in a tracked repo: checkout locally
+          visible: view.hasLocalPr(entry.it)
+          iconText: "\udb81\ude2c"
+          size: Style.space(18)
+          fontSize: Style.font.caption
+          foreground: view.panel.muted
+          hoverColor: view.panel.accent
+          tooltipText: "Checkout locally (c)"
+          onClicked: view.checkout(entry.it)
+        }
+        PanelActionButton {  // PR / review in a tracked repo: show it in Repos
+          visible: view.hasLocalPr(entry.it)
+          iconText: "\udb80\udc54"
+          size: Style.space(18)
+          fontSize: Style.font.caption
+          foreground: view.panel.muted
+          hoverColor: view.panel.accent
+          tooltipText: "Show in Repos (o)"
+          onClicked: view.panel.jumpToRepo(entry.it.localPath)
         }
         PanelActionButton {  // notification: mark read in place
           visible: entry.it !== undefined && entry.it.kind === "notification"

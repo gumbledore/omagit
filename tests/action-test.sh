@@ -243,6 +243,30 @@ assert_file "$TMP/wt-dirty/dirty.txt" "dirty worktree kept"
 assert_contains "$(git -C "$R" branch --list work/wt-dirty)" "work/wt-dirty" "dirty worktree branch kept"
 git -C "$R" worktree remove --force "$TMP/wt-dirty"; git -C "$R" branch -q -D work/wt-dirty
 
+# --- checkout-pr --------------------------------------------------------------------
+: > "$STUB_LOG"
+res=$(result_line "$(omagit-action checkout-pr "$R" 21)")
+assert_contains "$res" "OK" "checkout-pr clean tree ok"
+assert_contains "$res" "#21" "checkout-pr names the PR"
+assert_contains "$(cat "$STUB_LOG")" "gh pr checkout 21" "gh checkout called with the number"
+: > "$STUB_LOG"
+printf 'wip\n' > "$R/wip.txt"
+res=$(result_line "$(omagit-action checkout-pr "$R" 21 || true)")
+assert_contains "$res" "ERR" "checkout-pr refused on dirty tree"
+assert_contains "$res" "dirty" "refusal explains why"
+assert_not_contains "$(cat "$STUB_LOG")" "pr checkout" "no gh call on dirty tree"
+rm "$R/wip.txt"
+res=$(result_line "$(omagit-action checkout-pr "$R" "1;x" || true)")
+assert_contains "$res" "ERR" "invalid PR number refused"
+assert_not_contains "$(cat "$STUB_LOG")" "pr checkout" "no gh call for invalid number"
+res=$(result_line "$(omagit-action checkout-pr "$N" 21 || true)")
+assert_contains "$res" "ERR" "non-GitHub repo refused"
+assert_not_contains "$(cat "$STUB_LOG")" "pr checkout" "no gh call for non-GitHub repo"
+touch "$STUB_DIR/checkout-fail"
+res=$(result_line "$(omagit-action checkout-pr "$R" 21 || true)")
+assert_contains "$res" "ERR" "gh failure reported"
+rm "$STUB_DIR/checkout-fail"
+
 # --- open-file with configured command ----------------------------------------------
 omagit-action open-file "$R" "README.md" >/dev/null
 assert_contains "$(tail -n1 "$STUB_LOG")" "omarchy-launch-editor $R/README.md" "default open command"

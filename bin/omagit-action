@@ -13,6 +13,7 @@
 #   branches <repo>                   BRANCH<TAB>name<TAB>current(0|1)
 #   create-pr <repo>                  refuse on main; push -u; gh pr create --web
 #   merge-pr <repo> <number>          gh pr merge (settings strategy), then ff-main, prune-gone
+#   checkout-pr <repo> <number>       refuse on dirty tree; gh pr checkout in the clone
 #   ff-main <repo>                    pull --ff-only or fetch def:def; diverged -> ERR
 #   prune-gone <repo>                 fetch --prune, delete local branches whose upstream is gone
 #   open-file <repo> <file>           openFileCommand <abs path>
@@ -283,6 +284,15 @@ cmd_merge_pr() {
   ok "$msg"
 }
 
+cmd_checkout_pr() {
+  local repo=$1 num=$2
+  [[ $num =~ ^[0-9]+$ ]] || err "Invalid PR number"
+  is_github "$repo" || err "origin is not a GitHub remote"
+  is_dirty "$repo" && err "working tree is dirty — commit or stash first"
+  ( cd "$repo" && run gh pr checkout "$num" ) || err "Checkout of PR #$num failed"
+  ok "checked out PR #$num"
+}
+
 # ------------------------------------------------------------------ launchers
 cmd_open_file() {
   local repo=$1 file=$2 abs cmd parts
@@ -333,6 +343,7 @@ case "$verb" in
   branches) cmd_branches "$repo" ;;
   create-pr) cmd_create_pr "$repo" ;;
   merge-pr) cmd_merge_pr "$repo" "${3:-}" ;;
+  checkout-pr) cmd_checkout_pr "$repo" "${3:-}" ;;
   ff-main) cmd_ff_main "$repo" ;;
   prune-gone) cmd_prune_gone "$repo" ;;
   open-file) cmd_open_file "$repo" "${3:-}" ;;

@@ -120,6 +120,16 @@ Panel {
   readonly property int inboxReviewCount: root.sectionItems("reviews").length
   readonly property int inboxFailingPrCount: root.sectionItems("prs").filter(function(i) { return i.ci === "failing" }).length
 
+  readonly property bool inboxAttention: inboxUnreadCount > 0 || inboxReviewCount > 0 || inboxFailingPrCount > 0
+
+  // Inbox -> local clone: explicit key/button only (checkout refuses a dirty tree).
+  function checkoutPr(localPath, number) { return root.runAction(localPath, "checkout-pr", [String(number)]) }
+  function jumpToRepo(localPath) {
+    root.setTab("repos")
+    root.expandedPath = localPath
+    reposView.reveal(localPath)
+  }
+
   function setTab(name) {
     if (name === root.tab) return
     root.tab = name

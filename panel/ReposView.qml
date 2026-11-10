@@ -60,6 +60,14 @@ ColumnLayout {
     Qt.callLater(function() { list.positionViewAtIndex(view.cursorIndex, ListView.Contain) })
   }
 
+  // Highlight and scroll to a repo, clearing filters that would hide it.
+  function reveal(path) {
+    filterField.text = ""
+    attentionOnly = false
+    cursorPath = path
+    Qt.callLater(function() { list.positionViewAtIndex(view.cursorIndex, ListView.Contain) })
+  }
+
   function releaseFocus() { panel.keyTarget.forceActiveFocus() }
 
   readonly property var actionKeys: ({
