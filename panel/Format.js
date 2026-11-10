@@ -12,6 +12,22 @@ function splitRecords(text) {
   return out
 }
 
+// One-line banner for a gh status {state, reset (epoch s, 0 unknown)}; "" when healthy.
+function ghBanner(status) {
+  var st = status ? status.state : "ok"
+  if (st === "missing") return "gh not found \u2014 install GitHub CLI to see PRs"
+  if (st === "logged-out") return "gh is logged out \u2014 run `gh auth login`"
+  if (st === "rate-limited") {
+    var t = ""
+    if (status.reset > 0) {
+      var d = new Date(status.reset * 1000)
+      t = " \u2014 retry after " + ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2)
+    }
+    return "GitHub rate limit reached" + t
+  }
+  return ""
+}
+
 // "fetched 3 min ago" style stamp from a millisecond timestamp.
 function ago(ms, nowMs) {
   if (!ms) return "never fetched"

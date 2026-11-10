@@ -1,0 +1,2 @@
+#!/bin/bash
+printf 'omarchy-launch-webapp %s\n' "$*" >> "$STUB_LOG"

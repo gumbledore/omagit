@@ -11,5 +11,6 @@
   "scanDepth": 4,
   "ignoreDirs": ["node_modules", ".venv", "venv", "dist", "build", "__pycache__", ".obsidian", "target"],
   "openFileCommand": "omarchy-launch-editor",
-  "ghPrLimit": 20
+  "ghPrLimit": 20,
+  "linkBehavior": "browser"
 }

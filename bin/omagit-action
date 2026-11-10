@@ -45,9 +45,14 @@ fresh_branch() {
   printf '%s\n' "$name"
 }
 
+# https only; linkBehavior "webapp" opens an app window instead of a browser tab.
 open_url() {
-  [[ $1 =~ ^https?:// ]] || return 1
-  setsid -f xdg-open "$1" >/dev/null 2>&1
+  [[ $1 =~ ^https:// ]] || return 1
+  if [[ $(setting linkBehavior) == webapp ]]; then
+    setsid -f omarchy-launch-webapp "$1" >/dev/null 2>&1
+  else
+    setsid -f xdg-open "$1" >/dev/null 2>&1
+  fi
 }
 
 # ------------------------------------------------------------------ diff

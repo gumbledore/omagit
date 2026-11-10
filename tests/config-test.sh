@@ -5,19 +5,22 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 assert_no_file "$OMAGIT_CONFIG_DIR/settings.json" "no settings before first load"
 out=$(omagit-config settings)
 assert_file "$OMAGIT_CONFIG_DIR/settings.json" "settings created on first load"
-for key in schemaVersion launcher mergeStrategy deleteBranchOnMerge pruneGoneAfterMerge branchPrefix fallbackRefreshSeconds debounceMs scanDepth ignoreDirs openFileCommand ghPrLimit; do
+for key in schemaVersion launcher mergeStrategy deleteBranchOnMerge pruneGoneAfterMerge branchPrefix fallbackRefreshSeconds debounceMs scanDepth ignoreDirs openFileCommand ghPrLimit linkBehavior; do
   assert_eq "true" "$(jq --arg k "$key" 'has($k)' "$OMAGIT_CONFIG_DIR/settings.json")" "settings has $key"
 done
 assert_eq "squash" "$(jq -r .mergeStrategy <<<"$out")" "settings printed to stdout"
 assert_no_file "$OMAGIT_CONFIG_DIR/tracking.json" "tracking not created by settings load"
 
 # User edits survive; deleted keys come back; unknown keys are kept.
-jq '.mergeStrategy = "rebase" | .custom = 1 | del(.ghPrLimit)' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s.json"
+jq '.mergeStrategy = "rebase" | .custom = 1 | del(.ghPrLimit) | del(.linkBehavior)' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s.json"
 mv "$TMP/s.json" "$OMAGIT_CONFIG_DIR/settings.json"
 out=$(omagit-config settings)
 assert_eq "rebase" "$(jq -r .mergeStrategy <<<"$out")" "user value preserved on merge"
 assert_eq "20" "$(jq -r .ghPrLimit <<<"$out")" "missing key restored from defaults"
 assert_eq "1" "$(jq -r .custom <<<"$out")" "unknown key kept"
+assert_eq "browser" "$(jq -r .linkBehavior <<<"$out")" "linkBehavior merged into user file"
+jq '.linkBehavior = "webapp"' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s.json"; mv "$TMP/s.json" "$OMAGIT_CONFIG_DIR/settings.json"
+assert_eq "webapp" "$(omagit-config settings | jq -r .linkBehavior)" "user linkBehavior survives merge"
 assert_eq "1" "$(jq -r .schemaVersion <<<"$out")" "schemaVersion recorded"
 before=$(stat -c %Y "$OMAGIT_CONFIG_DIR/settings.json")
 sleep 1

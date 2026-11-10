@@ -131,6 +131,15 @@ assert_contains "$(cat "$STUB_LOG")" "gh pr create --web" "PR form opened in bro
 printf '[{"number":5,"title":"x","url":"https://github.com/example/repo/pull/5","headRefName":"work/x","statusCheckRollup":[]}]' > "$STUB_DIR/prs.json"
 out=$(omagit-action create-pr "$R")
 assert_contains "$(result_line "$out")" "pull/5" "existing PR reported, not an error"
+sleep 0.3
+assert_contains "$(cat "$STUB_LOG")" "xdg-open https://github.com/example/repo/pull/5" "browser link behavior"
+jq '.linkBehavior = "webapp"' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s.json"; mv "$TMP/s.json" "$OMAGIT_CONFIG_DIR/settings.json"
+: > "$STUB_LOG"
+omagit-action create-pr "$R" >/dev/null
+sleep 0.3
+assert_contains "$(cat "$STUB_LOG")" "omarchy-launch-webapp https://github.com/example/repo/pull/5" "webapp link behavior"
+assert_not_contains "$(cat "$STUB_LOG")" "xdg-open" "webapp does not use xdg-open"
+jq '.linkBehavior = "browser"' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s.json"; mv "$TMP/s.json" "$OMAGIT_CONFIG_DIR/settings.json"
 echo '[]' > "$STUB_DIR/prs.json"
 
 # --- ff-main: feature checked out, then main checked out, then diverged ----------

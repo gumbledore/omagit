@@ -42,6 +42,7 @@ Panel {
     return v === undefined || v === null ? fallback : v
   }
   readonly property string launcher: String(cfgVal("launcher", "native"))
+  readonly property string linkBehavior: String(cfgVal("linkBehavior", "browser"))
   readonly property int debounceMs: Math.max(100, Number(cfgVal("debounceMs", 500)) || 500)
   readonly property int fallbackSeconds: Math.max(30, Number(cfgVal("fallbackRefreshSeconds", 300)) || 300)
 
@@ -286,11 +287,13 @@ Panel {
 
   // ---- remote (manual only) ---------------------------------------------------
   property var prBuffer: ({})
+  property var ghStatus: ({ state: "ok", reset: 0, message: "" })
 
   function fetchRepos(paths) {
     if (root.fetching || paths.length === 0) return
     root.fetching = true
     root.prBuffer = {}
+    root.ghStatus = { state: "ok", reset: 0, message: "" }
     remoteProcess.command = [root.binDir + "/omagit-remote"].concat(paths)
     remoteProcess.running = true
   }
@@ -309,6 +312,10 @@ Panel {
   function applyRemoteLine(line) {
     var r = line.split("\t")
     if (r.length < 2) return
+    if (r[0] === "GH") {
+      if (r[1] !== "ok") root.ghStatus = { state: r[1], reset: parseInt(r[2]) || 0, message: r[3] || "" }
+      return
+    }
     var path = r[1]
     var rs = root.remoteStatus[path] ? Object.assign({}, root.remoteStatus[path]) : {}
     if (r[0] === "FETCH") {
@@ -396,8 +403,9 @@ Panel {
 
   function openUrl(url) {
     var u = String(url || "")
-    if (!/^https?:\/\//.test(u)) return
-    if (!Qt.openUrlExternally(u)) Quickshell.execDetached(["xdg-open", u])
+    if (!/^https:\/\//.test(u)) return
+    if (root.linkBehavior === "webapp") Quickshell.execDetached(["omarchy-launch-webapp", u])
+    else if (!Qt.openUrlExternally(u)) Quickshell.execDetached(["xdg-open", u])
   }
 
   // ---- uninstall ---------------------------------------------------------------------
@@ -489,6 +497,16 @@ Panel {
           tooltipText: "Open settings.json"
           onClicked: root.openSettings()
         }
+      }
+
+      Text {
+        visible: Format.ghBanner(root.ghStatus) !== ""
+        Layout.fillWidth: true
+        text: Format.ghBanner(root.ghStatus)
+        color: root.urgent
+        wrapMode: Text.Wrap
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
       }
 
       // ---------------------------------------------------------------- repos
