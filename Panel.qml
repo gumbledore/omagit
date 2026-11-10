@@ -19,6 +19,8 @@ Panel {
   manageIpc: false
 
   property var anchorItem: null
+  // Where keys go when no text field is editing (views hand focus back here).
+  readonly property Item keyTarget: keyCatcher
   property var hostWidget: null
   readonly property var barIdentity: hostWidget || root
 
@@ -255,6 +257,7 @@ Panel {
   onOpenedChanged: {
     root.uninstallArmed = false
     if (root.opened) {
+      reposView.resetCursor()
       root.refreshHerdr()
       root.nowMs = Date.now()
       agentNameProcess.running = true
@@ -436,7 +439,16 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      onCloseRequested: root.close()
+      blocked: reposView.textFocused
+      onMoveRequested: function(dx, dy) { if (dy !== 0) reposView.moveCursor(dy) }
+      onActivateRequested: reposView.activate()
+      onCloseRequested: { if (!reposView.handleEscape()) root.close() }
+      onTextKey: function(t, modifiers) {
+        if (modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) return
+        if (t === "r") root.refreshAll()
+        else if (t === "f") root.fetchAll()
+        else reposView.handleKey(t)
+      }
     }
 
     ColumnLayout {
@@ -479,12 +491,12 @@ Panel {
           iconText: "\udb80\uddda"
           iconSpinning: root.fetching
           enabled: !root.fetching && root.repos.length > 0
-          tooltipText: "git fetch + open PRs for every repo"
+          tooltipText: "git fetch + open PRs for every repo (f)"
           onClicked: root.fetchAll()
         }
         PanelActionButton {
           iconText: "\udb81\udc50"
-          tooltipText: "Refresh (re-scan roots, re-read all repos)"
+          tooltipText: "Refresh (re-scan roots, re-read all repos) (r)"
           onClicked: root.refreshAll()
         }
         PanelActionButton {
