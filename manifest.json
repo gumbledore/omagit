@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "gumbledore.omagit",
   "name": "omagit",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "Kevin Goff",
   "license": "MIT",
-  "description": "Multi-repo git dashboard for the Omarchy bar: tracked repos, live local state, fetch, quick commit, PR merge, fast-forward main, terminal and agent launchers.",
+  "description": "Multi-repo git dashboard for the Omarchy bar: tracked repos, live local state, GitHub inbox, background fetch, quick commit, PR merge, fast-forward main, terminal and agent launchers.",
   "kinds": ["bar-widget"],
   "entryPoints": {
     "barWidget": "BarWidget.qml"
