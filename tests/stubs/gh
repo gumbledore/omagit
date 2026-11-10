@@ -7,6 +7,10 @@
 #   pr-list-limited `gh pr list` fails with a rate-limit message
 #   merge-fail  if present, `gh pr merge` fails
 #   pr-N-open     if present, `gh pr view N --json state` reports OPEN (else MERGED)
+#   login         login for `gh api user` and `gh config get user` (default octocat)
+#   graphql.json  body for `gh api graphql` (default: empty result for every alias);
+#                 exits 1 when it has a top-level "errors" key, like real gh
+#   graphql-fail  `gh api graphql` fails with no body
 # `gh pr merge` performs a real merge in the bare origin so ff/prune have
 # something to act on.
 printf 'gh %s\n' "$*" >> "$STUB_LOG"
@@ -16,6 +20,20 @@ case "$1 $2" in
   "api rate_limit")
     cat "$STUB_DIR/rate_limit.json" 2>/dev/null \
       || echo '{"resources":{"core":{"limit":5000,"remaining":4999,"reset":0},"graphql":{"limit":5000,"remaining":4999,"reset":0}}}' ;;
+  "api user")
+    login=$(cat "$STUB_DIR/login" 2>/dev/null || echo octocat)
+    if [[ " $* " == *" --jq .login "* || " $* " == *" -q .login "* ]]; then echo "$login"
+    else printf '{"login":"%s"}\n' "$login"; fi ;;
+  "api graphql")
+    [[ -e $STUB_DIR/graphql-fail ]] && { echo "gh: graphql: connection reset" >&2; exit 1; }
+    if [[ -f $STUB_DIR/graphql.json ]]; then
+      cat "$STUB_DIR/graphql.json"
+      jq -e 'has("errors")' "$STUB_DIR/graphql.json" >/dev/null 2>&1 && exit 1
+    else
+      echo '{"data":{"reviews":{"nodes":[]},"prs":{"nodes":[]}}}'
+    fi ;;
+  "config get")
+    cat "$STUB_DIR/login" 2>/dev/null || echo octocat ;;
   "pr list")
     [[ -e $STUB_DIR/pr-list-limited ]] && { echo "gh: API rate limit exceeded (HTTP 403)" >&2; exit 1; }
     cat "$STUB_DIR/prs.json" 2>/dev/null || echo "[]" ;;

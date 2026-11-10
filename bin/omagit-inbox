@@ -1,0 +1,130 @@
+#!/bin/bash
+# omagit-inbox fetch [<tracked-repo>...] | cached: the account-wide GitHub inbox.
+# GraphQL query ideas borrowed from robzolkos/omarchy-github (MIT).
+#
+#   fetch   GH       state(ok|missing|logged-out|rate-limited)  reset_epoch  message
+#           LOGIN    login                       (only when gh api user succeeded)
+#           REVIEW   owner/repo  number  title  url  author  updatedAt  localPath
+#           MYPR     owner/repo  number  title  url  ci(passing|failing|pending|none)
+#                    updatedAt  localPath  draft(0|1)
+#           SECTION  reviews|prs  OK|ERR|SKIP  message   (OK message = item count)
+#           INBOXDONE  epoch
+#     Drafts (review requests) and archived-repo items are filtered out; sections
+#     are capped at 50. localPath is the tracked repo whose github origin matches
+#     (case-insensitive), else empty. gh not ok -> both sections SKIP, no cache write.
+#     A section that fails (null alias / named in errors[].path) is ERR; the other
+#     renders. On success with no ERR/SKIP the item and SECTION records are cached.
+#   cached  no network. Prints the cache file when its login equals gh's current
+#           login (gh config), else deletes it and prints nothing.
+#
+# Cache $OMAGIT_CACHE_DIR/inbox.tsv: line 1 `CACHE<TAB>login<TAB>epoch`, then the
+# REVIEW/MYPR/SECTION records exactly as emitted.
+
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/../lib/common.sh"
+
+CACHE_FILE="$OMAGIT_CACHE_DIR/inbox.tsv"
+
+QUERY='query {
+  reviews: search(query: "is:open is:pr review-requested:@me archived:false draft:false", type: ISSUE, first: 50) { nodes { ...pr } }
+  prs: search(query: "is:open is:pr author:@me archived:false", type: ISSUE, first: 50) { nodes { ...pr } }
+}
+fragment pr on PullRequest {
+  number title url isDraft updatedAt author { login }
+  repository { nameWithOwner isArchived }
+  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+}'
+
+JQ='
+def clean: tostring | gsub("[\t\r\n]"; " ");
+def ci: (.commits.nodes[0].commit.statusCheckRollup.state // "") as $s
+  | if $s == "SUCCESS" then "passing"
+    elif $s == "FAILURE" or $s == "ERROR" then "failing"
+    elif $s == "PENDING" or $s == "EXPECTED" then "pending"
+    else "none" end;
+def lp: $paths[.repository.nameWithOwner | ascii_downcase] // "";
+def row: map(clean) | join("\t");
+def errmsg($a): ([.errors[]? | select((.path // [])[0] == $a) | .message][0])
+  // (if .data[$a] == null then ([.errors[]?.message][0] // "no data") else null end);
+def section($a): . as $r | ($r | errmsg($a)) as $e
+  | if $e != null then ["SECTION", $a, "ERR", $e] | row
+    else
+      ([$r.data[$a].nodes[]? | select(.number != null and .repository.isArchived != true)
+        | select($a == "prs" or .isDraft != true)] | .[:50]) as $items
+      | ($items[] | if $a == "reviews"
+          then ["REVIEW", .repository.nameWithOwner, .number, .title, .url, (.author.login // ""), .updatedAt, lp]
+          else ["MYPR", .repository.nameWithOwner, .number, .title, .url, ci, .updatedAt, lp, (if .isDraft then "1" else "0" end)]
+          end | row),
+        (["SECTION", $a, "OK", ($items | length)] | row)
+    end;
+section("reviews"), section("prs")'
+
+# owner/repo (lowercase) from a github.com origin URL, or nothing.
+origin_nwo() {
+  local u=${1%/}; u=${u%.git}
+  [[ $u =~ ^(https?://([^@/]+@)?|ssh://git@|git@)github\.com[:/]([^/]+/[^/]+)$ ]] || return 0
+  printf '%s\n' "${BASH_REMATCH[3],,}"
+}
+
+sections() { # <status> <message> for both sections
+  tsv SECTION reviews "$1" "$2"; tsv SECTION prs "$1" "$2"
+}
+
+cmd_fetch() {
+  local rec state login out err rc errf st body paths lines r nwo
+  rec=$(gh_status); printf '%s\n' "$rec"
+  state=$(cut -f2 <<<"$rec")
+  if [[ $state != ok ]]; then sections SKIP "gh $state"; tsv INBOXDONE "$(now)"; return; fi
+
+  login=$(with_timeout gh api user --jq .login 2>&1); rc=$?
+  if (( rc != 0 )) || [[ -z $login ]]; then
+    st=$(gh_classify_error "$login")
+    if [[ -n $st ]]; then tsv GH "$st" "" "gh $st"; sections SKIP "gh $st"
+    else sections ERR "${login:-gh api user failed (exit $rc)}"; fi
+    tsv INBOXDONE "$(now)"; return
+  fi
+  tsv LOGIN "$login"
+
+  errf=$(mktemp); out=$(with_timeout gh api graphql -f query="$QUERY" 2>"$errf"); rc=$?
+  err=$(<"$errf"); rm -f "$errf"
+  if ! jq -e '.data | type == "object"' <<<"$out" >/dev/null 2>&1; then
+    st=$(gh_classify_error "$out $err")
+    if [[ -n $st ]]; then tsv GH "$st" "" "gh $st"; sections SKIP "gh $st"
+    else
+      st=$(jq -r '.errors[0].message // empty' <<<"$out" 2>/dev/null)
+      sections ERR "$(head -n1 <<<"${st:-${err:-${out:-gh api graphql failed (exit $rc)}}}")"
+    fi
+    tsv INBOXDONE "$(now)"; return
+  fi
+
+  paths="{}"
+  if (( $# > 0 )); then
+    paths=$(for r in "$@"; do
+      nwo=$(origin_nwo "$(git -C "$r" config --get remote.origin.url 2>/dev/null)")
+      [[ -n $nwo ]] && printf '%s\t%s\n' "$nwo" "$r"
+    done | jq -R -s 'split("\n") | map(select(. != "") | split("\t")) | reduce .[] as $p ({}; if has($p[0]) then . else .[$p[0]] = $p[1] end)')
+  fi
+  if ! lines=$(jq -r --argjson paths "$paths" "$JQ" <<<"$out" 2>/dev/null); then
+    sections ERR "could not parse gh output"; tsv INBOXDONE "$(now)"; return
+  fi
+  printf '%s\n' "$lines"
+
+  if ! grep -qP '^SECTION\t\w+\t(ERR|SKIP)\t' <<<"$lines"; then
+    mkdir -p "$OMAGIT_CACHE_DIR"
+    { tsv CACHE "$login" "$(now)"; printf '%s\n' "$lines"; } > "$CACHE_FILE.tmp" && mv -f "$CACHE_FILE.tmp" "$CACHE_FILE"
+  fi
+  tsv INBOXDONE "$(now)"
+}
+
+cmd_cached() {
+  local cur cached
+  [[ -f $CACHE_FILE ]] || return 0
+  cur=$(with_timeout gh config get user -h github.com 2>/dev/null)
+  cached=$(head -n1 "$CACHE_FILE" | cut -f2)
+  if [[ -n $cur && ${cur,,} == "${cached,,}" ]]; then cat "$CACHE_FILE"; else rm -f "$CACHE_FILE"; fi
+}
+
+case "${1:-}" in
+  fetch) shift; cmd_fetch "$@" ;;
+  cached) cmd_cached ;;
+  *) die "usage: omagit-inbox fetch [<repo>...] | cached" ;;
+esac

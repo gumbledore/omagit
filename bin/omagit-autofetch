@@ -1,13 +1,17 @@
 #!/bin/bash
-# omagit-autofetch due | run <auto|manual> <repo>...: owns "is a fetch due?",
+# omagit-autofetch due | run <auto|manual> [--inbox] [<repo>...]: owns "is a fetch due?",
 # the fetch lock, and the last-run record in $OMAGIT_CACHE_DIR. Every fetch
 # (manual or automatic) goes through `run`, so they never overlap.
 #
 #   due   DUE   yes|no  due|disabled|running|backoff|not-yet  next_epoch
 #         LAST  finish_epoch  ok|err|""  auto|manual|""  message
-#   run   streams omagit-remote records unchanged, then
+#   run   streams omagit-remote records unchanged (skipped with no repos), then with
+#         --inbox the omagit-inbox records too (a "full" run), then
 #         AUTOFETCH  ok|err  message  backoff_until
-#         or a single BUSY record when another fetch holds the lock
+#         or a single BUSY record when another fetch holds the lock.
+#         Zero repos is only valid with --inbox. Only full runs update the state
+#         below; a run without --inbox takes the lock and streams but leaves the
+#         auto-fetch schedule alone.
 #
 # State (autofetch.state, key=value): last_start last_finish last_result
 # last_mode last_message backoff_until.
@@ -55,12 +59,15 @@ cmd_due() {
 
 cmd_run() {
   local mode=$1 lockfd line t min fetch_err=0 prs_err=0 gh_state="" gh_reset="" backoff=0 parts=() msg result
+  local full=0 inbox_errs=() name
   shift
-  [[ $mode == auto || $mode == manual ]] && (( $# > 0 )) || die "usage: omagit-autofetch run <auto|manual> <repo>..."
+  if [[ ${1:-} == --inbox ]]; then full=1; shift; fi
+  [[ $mode == auto || $mode == manual ]] && (( full || $# > 0 )) \
+    || die "usage: omagit-autofetch run <auto|manual> [--inbox] [<repo>...]"
   exec {lockfd}>"$LOCK_FILE"
   if ! flock -n "$lockfd"; then tsv BUSY; return 0; fi
   load_state; t=$(now); min=$(interval_min)
-  S[last_start]=$t; save_state
+  if (( full )); then S[last_start]=$t; save_state; fi
 
   # fd closed for the child so a lingering git/gh daemon can't hold the lock.
   # gh missing is a standing condition (the banner covers it), not a failed run.
@@ -70,9 +77,10 @@ cmd_run() {
     case "${f[0]}" in
       FETCH) [[ ${f[2]:-} == ERR ]] && fetch_err=$((fetch_err + 1)) ;;
       PRS)   [[ ${f[2]:-} == ERR ]] && prs_err=$((prs_err + 1)) ;;
+      SECTION) [[ ${f[2]:-} == ERR ]] && inbox_errs+=("${f[1]}") ;;
       GH)    if [[ ${f[1]:-ok} != ok && ${f[1]} != missing ]]; then gh_state=${f[1]}; [[ ${f[1]} == rate-limited ]] && { backoff=1; gh_reset=${f[2]:-}; }; fi ;;
     esac
-  done < <("$BIN_DIR/omagit-remote" "$@" {lockfd}>&-)
+  done < <( { (( $# > 0 )) && "$BIN_DIR/omagit-remote" "$@"; (( full )) && "$BIN_DIR/omagit-inbox" fetch "$@"; } {lockfd}>&- )
 
   t=$(now)
   if (( backoff )); then
@@ -85,16 +93,19 @@ cmd_run() {
   fi
   (( fetch_err )) && parts+=("$fetch_err repo$( ((fetch_err > 1)) && echo s) failed to fetch")
   (( prs_err )) && parts+=("$prs_err repo$( ((prs_err > 1)) && echo s) failed PR lookup")
+  for name in "${inbox_errs[@]}"; do parts+=("inbox $name failed"); done
   if (( ${#parts[@]} )); then result=err; msg=$(IFS=';'; printf '%s' "${parts[*]}"); msg=${msg//;/; }; else result=ok msg=""; fi
   msg=$(flat "$msg")
 
-  S[last_finish]=$t S[last_result]=$result S[last_mode]=$mode S[last_message]=$msg S[backoff_until]=$backoff
-  save_state
+  if (( full )); then
+    S[last_finish]=$t S[last_result]=$result S[last_mode]=$mode S[last_message]=$msg S[backoff_until]=$backoff
+    save_state
+  fi
   tsv AUTOFETCH "$result" "$msg" "$backoff"
 }
 
 case "${1:-}" in
   due) cmd_due ;;
   run) shift; cmd_run "$@" ;;
-  *) die "usage: omagit-autofetch due | run <auto|manual> <repo>..." ;;
+  *) die "usage: omagit-autofetch due | run <auto|manual> [--inbox] [<repo>...]" ;;
 esac

@@ -101,6 +101,46 @@ Panel {
     return n
   }
 
+  // ---- inbox (account-wide; cached output shown first, live fetch swaps in on INBOXDONE) ----
+  property var inbox: Format.emptyInbox()
+  property var inboxBuffer: []
+  property string tab: "repos"   // "repos" | "inbox"; remembered via omagit-config ui-set
+  readonly property var currentView: root.tab === "inbox" ? inboxView : reposView
+
+  function sectionItems(name) {
+    var sec = root.inbox.sections[name]
+    return sec ? sec.items : []
+  }
+  readonly property int inboxCount: {
+    var n = 0
+    for (var k in root.inbox.sections) n += root.inbox.sections[k].items.length
+    return n
+  }
+  readonly property int inboxReviewCount: root.sectionItems("reviews").length
+  readonly property int inboxFailingPrCount: root.sectionItems("prs").filter(function(i) { return i.ci === "failing" }).length
+
+  function setTab(name) {
+    if (name === root.tab) return
+    root.tab = name
+    Quickshell.execDetached([root.binDir + "/omagit-config", "ui-set", "tab", name])
+  }
+
+  property Process tabProcess: Process {
+    command: [root.binDir + "/omagit-config", "ui-get", "tab"]
+    stdout: StdioCollector { id: tabOut; waitForEnd: true }
+    onExited: function(exitCode) { if (String(tabOut.text).trim() === "inbox") root.tab = "inbox" }
+  }
+
+  property Process inboxCacheProcess: Process {
+    command: [root.binDir + "/omagit-inbox", "cached"]
+    stdout: StdioCollector { id: inboxCacheOut; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (root.inbox.fetchedAt > 0) return   // a live fetch already landed
+      var parsed = Format.parseInbox(Format.splitRecords(inboxCacheOut.text))
+      if (parsed.fetchedAt > 0) root.inbox = parsed
+    }
+  }
+
   readonly property string headerSummary: {
     var parts = [root.repos.length + " repo" + (root.repos.length === 1 ? "" : "s")]
     if (root.attentionCount > 0) parts.push(root.attentionCount + " need attention")
@@ -141,7 +181,7 @@ Panel {
         root.repos = list
         root.restartWatcher()
       }
-      if (!root.catchUpDone && list.length > 0) { root.catchUpDone = true; root.checkAutoFetch() }
+      if (!root.catchUpDone) { root.catchUpDone = true; root.checkAutoFetch() }
       var paths = list.map(function(r) { return r.path })
       root.requestRead(paths)
       root.refreshHerdr()
@@ -261,6 +301,7 @@ Panel {
     root.uninstallArmed = false
     if (root.opened) {
       reposView.resetCursor()
+      inboxView.resetCursor()
       root.refreshHerdr()
       root.nowMs = Date.now()
       agentNameProcess.running = true
@@ -300,14 +341,15 @@ Panel {
   property bool fetchBusy: false
 
   // All fetches go through omagit-autofetch so its lock covers manual ones too.
-  // To chain work (e.g. an inbox fetch) after a fetch, hook remoteProcess.onExited.
-  function fetchRepos(paths, mode) {
-    if (root.fetching || paths.length === 0) return
+  // `full` adds the account-wide inbox (omagit-autofetch --inbox) and counts as the scheduled run.
+  function fetchRepos(paths, mode, full) {
+    if (root.fetching || (!full && paths.length === 0)) return
     root.fetching = true
     root.fetchMode = mode || "manual"
     root.prBuffer = {}
+    root.inboxBuffer = []
     root.ghStatus = { state: "ok", reset: 0, message: "" }
-    remoteProcess.command = [root.binDir + "/omagit-autofetch", "run", root.fetchMode].concat(paths)
+    remoteProcess.command = [root.binDir + "/omagit-autofetch", "run", root.fetchMode].concat(full ? ["--inbox"] : [], paths)
     remoteProcess.running = true
   }
 
@@ -338,7 +380,7 @@ Panel {
         }
       }
       root.autoStatus = a
-      if (yes && !root.fetching && root.repos.length > 0) root.fetchRepos(root.allPaths(), "auto")
+      if (yes && !root.fetching) root.fetchRepos(root.allPaths(), "auto", true)
     }
   }
 
@@ -349,7 +391,7 @@ Panel {
     onTriggered: root.checkAutoFetch()
   }
 
-  function fetchAll() { root.fetchRepos(root.allPaths(), "manual") }
+  function fetchAll() { root.fetchRepos(root.allPaths(), "manual", true) }
 
   property Process remoteProcess: Process {
     stdout: SplitParser { onRead: function(line) { root.applyRemoteLine(String(line)) } }
@@ -373,6 +415,15 @@ Panel {
     if (r[0] === "AUTOFETCH") {
       root.autoStatus = { ok: r[1] === "ok", finish: Math.round(Date.now() / 1000), mode: root.fetchMode,
                           message: r[2] || "", next: parseInt(r[3]) || 0 }
+      return
+    }
+    if (r[0] === "LOGIN" || r[0] === "REVIEW" || r[0] === "MYPR" || r[0] === "SECTION") {
+      root.inboxBuffer.push(r)
+      return
+    }
+    if (r[0] === "INBOXDONE") {   // omagit-remote's own DONE carries a repo path instead
+      root.inbox = Format.mergeInbox(root.inbox, Format.parseInbox(root.inboxBuffer.concat([r])), root.fetchMode === "auto")
+      root.inboxBuffer = []
       return
     }
     var path = r[1]
@@ -481,7 +532,11 @@ Panel {
       'setsid nohup bash -c \'rm -rf "$HOME/.config/gumbledore.omagit"; omarchy plugin remove gumbledore.omagit --yes\' >/dev/null 2>&1 &'])
   }
 
-  Component.onCompleted: settingsBootstrap.running = true
+  Component.onCompleted: {
+    settingsBootstrap.running = true
+    tabProcess.running = true
+    inboxCacheProcess.running = true
+  }
   Component.onDestruction: { if (watchProcess.running) watchProcess.signal(15) }
 
   // ================================================================== UI
@@ -498,15 +553,18 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: reposView.textFocused
-      onMoveRequested: function(dx, dy) { if (dy !== 0) reposView.moveCursor(dy) }
-      onActivateRequested: reposView.activate()
-      onCloseRequested: { if (!reposView.handleEscape()) root.close() }
+      blocked: root.currentView.textFocused
+      onMoveRequested: function(dx, dy) { if (dy !== 0) root.currentView.moveCursor(dy) }
+      onActivateRequested: root.currentView.activate()
+      onCloseRequested: { if (!root.currentView.handleEscape()) root.close() }
+      onTabRequested: function(direction) { root.setTab(root.tab === "repos" ? "inbox" : "repos") }
       onTextKey: function(t, modifiers) {
         if (modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) return
-        if (t === "r") root.refreshAll()
+        if (t === "1") root.setTab("repos")
+        else if (t === "2") root.setTab("inbox")
+        else if (t === "r") root.refreshAll()
         else if (t === "f") root.fetchAll()
-        else reposView.handleKey(t)
+        else root.currentView.handleKey(t)
       }
     }
 
@@ -549,8 +607,8 @@ Panel {
           text: root.fetching ? "Fetching…" : "Fetch all"
           iconText: "\udb80\uddda"
           iconSpinning: root.fetching
-          enabled: !root.fetching && root.repos.length > 0
-          tooltipText: "git fetch + open PRs for every repo (f)"
+          enabled: !root.fetching
+          tooltipText: "git fetch + open PRs for every repo, and your GitHub inbox (f)"
           onClicked: root.fetchAll()
         }
         PanelActionButton {
@@ -559,6 +617,7 @@ Panel {
           onClicked: root.refreshAll()
         }
         PanelActionButton {
+          visible: root.tab === "repos"
           iconText: "\udb81\udc15"
           tooltipText: reposView.addFormVisible ? "Hide tracking" : "Add root / repo, manage tracking"
           onClicked: reposView.addFormVisible = !reposView.addFormVisible
@@ -580,9 +639,41 @@ Panel {
         font.pixelSize: Style.font.caption
       }
 
-      // ---------------------------------------------------------------- repos
+      // ---------------------------------------------------------------- tabs (Tab / 1 / 2)
+      RowLayout {
+        Layout.fillWidth: true
+        spacing: Style.space(6)
+        Button {
+          text: "Repos" + (root.attentionCount > 0 ? " \u00b7 " + root.attentionCount : "")
+          fontSize: Style.font.caption
+          bordered: true
+          selected: root.tab === "repos"
+          tooltipText: "Repos (1)"
+          onClicked: root.setTab("repos")
+        }
+        Button {
+          text: "Inbox" + (root.inboxCount > 0 ? " \u00b7 " + root.inboxCount : "")
+          fontSize: Style.font.caption
+          bordered: true
+          selected: root.tab === "inbox"
+          tooltipText: "Review requests and your pull requests (2)"
+          onClicked: root.setTab("inbox")
+        }
+        Item { Layout.fillWidth: true }
+      }
+
+      // ---------------------------------------------------------------- views (both stay instantiated)
       OmagitPanel.ReposView {
         id: reposView
+        visible: root.tab === "repos"
+        panel: root
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+      }
+
+      OmagitPanel.InboxView {
+        id: inboxView
+        visible: root.tab === "inbox"
         panel: root
         Layout.fillWidth: true
         Layout.fillHeight: true

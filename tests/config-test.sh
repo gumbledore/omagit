@@ -101,6 +101,20 @@ assert_eq "" "$(omagit-config discover)" "nothing tracked after root removal"
 ( cd "$TMP" && omagit-config add-repo "./solo" >/dev/null )
 assert_eq "$TMP/solo" "$(jq -r '.repos[0]' "$OMAGIT_CONFIG_DIR/tracking.json")" "relative path made absolute"
 
+# --- ui state ---------------------------------------------------------------------
+export OMAGIT_CACHE_DIR="$TMP/cache"
+assert_eq "" "$(omagit-config ui-get tab)" "ui-get on missing file is empty"
+omagit-config ui-set tab inbox
+assert_eq "inbox" "$(omagit-config ui-get tab)" "ui-set then ui-get"
+omagit-config ui-set other-key $'a\tb\nc'
+omagit-config ui-set tab repos
+assert_eq "repos" "$(omagit-config ui-get tab)" "ui-set replaces"
+assert_eq "a b c" "$(omagit-config ui-get other-key)" "value flattened, other keys kept"
+assert_eq "2" "$(wc -l < "$OMAGIT_CACHE_DIR/ui.state")" "one line per key"
+assert_no_file "$OMAGIT_CACHE_DIR/ui.state.tmp" "no tmp file left"
+assert_contains "$(omagit-config ui-set 'Bad Key' x 2>&1 || true)" "invalid ui key" "key restricted to [a-z-]+"
+assert_contains "$(omagit-config ui-get 'a=b' 2>&1 || true)" "invalid ui key" "ui-get validates key"
+
 finish
 
 # --- pre-namespace config dir is moved once ------------------------------------
