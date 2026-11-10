@@ -29,7 +29,6 @@ ok() { tsv RESULT OK "$*"; exit 0; }
 err() { tsv RESULT ERR "$*"; exit 1; }
 
 has_remote() { [[ -n $(git -C "$1" remote 2>/dev/null) ]]; }
-is_github() { git -C "$1" config --get remote.origin.url 2>/dev/null | grep -q "github\.com"; }
 is_dirty() { [[ -n $(git -C "$1" status --porcelain --untracked-files=all 2>/dev/null) ]]; }
 has_head() { git -C "$1" rev-parse -q --verify HEAD >/dev/null 2>&1; }
 branch_exists() { git -C "$1" show-ref -q --verify "refs/heads/$2" 2>/dev/null; }

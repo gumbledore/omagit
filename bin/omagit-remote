@@ -22,8 +22,6 @@ ROLLUP='
       else "passing" end;
   .[] | [.number, .title, .url, ci, .headRefName] | @tsv'
 
-is_github() { git -C "$1" config --get remote.origin.url 2>/dev/null | grep -q "github\.com"; }
-
 AUTH_RE='Authentication failed|could not read Username|terminal prompts disabled|Permission denied \(publickey\)'
 
 one_repo() {

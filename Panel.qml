@@ -395,7 +395,7 @@ Panel {
     root.fetchMode = mode || "manual"
     root.prBuffer = {}
     root.inboxBuffer = []
-    root.ghStatus = { state: "ok", reset: 0, message: "" }
+    if (full) root.ghStatus = { state: "ok", reset: 0, message: "" }
     remoteProcess.command = [root.binDir + "/omagit-autofetch", "run", root.fetchMode].concat(full ? ["--inbox"] : [], paths)
     remoteProcess.running = true
   }
@@ -404,7 +404,7 @@ Panel {
 
   // ---- auto-fetch: the helper decides, the timer only polls -------------------
   function checkAutoFetch() {
-    if (root.fetching || dueProcess.running) return
+    if (root.fetching || dueProcess.running || actionProcess.running) return   // don't race a user action's own fetch
     dueProcess.running = true
   }
 
@@ -457,6 +457,7 @@ Panel {
     if (r.length < 2) return
     if (r[0] === "GH") {
       if (r[1] !== "ok") root.ghStatus = { state: r[1], reset: parseInt(r[2]) || 0, message: r[3] || "" }
+      else if (root.ghStatus.state !== "missing-scope") root.ghStatus = { state: "ok", reset: 0, message: "" }
       return
     }
     if (r[0] === "AUTOFETCH") {

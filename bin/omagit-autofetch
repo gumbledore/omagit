@@ -58,7 +58,7 @@ cmd_due() {
 }
 
 cmd_run() {
-  local mode=$1 lockfd line t min fetch_err=0 prs_err=0 gh_state="" gh_reset="" backoff=0 parts=() msg result
+  local mode=$1 lockfd line t min fetch_err=0 auth_hint=0 prs_err=0 gh_state="" gh_reset="" backoff=0 parts=() msg result
   local full=0 inbox_errs=() name
   shift
   if [[ ${1:-} == --inbox ]]; then full=1; shift; fi
@@ -75,7 +75,7 @@ cmd_run() {
     printf '%s\n' "$line"
     IFS=$'\t' read -r -a f <<<"$line"
     case "${f[0]}" in
-      FETCH) [[ ${f[2]:-} == ERR ]] && fetch_err=$((fetch_err + 1)) ;;
+      FETCH) if [[ ${f[2]:-} == ERR ]]; then fetch_err=$((fetch_err + 1)); [[ ${f[3]:-} == *"gh auth setup-git"* ]] && auth_hint=1; fi ;;
       PRS)   [[ ${f[2]:-} == ERR ]] && prs_err=$((prs_err + 1)) ;;
       SECTION) [[ ${f[2]:-} == ERR ]] && inbox_errs+=("${f[1]}") ;;
       GH)    if [[ ${f[1]:-ok} != ok && ${f[1]} != missing && ${f[1]} != missing-scope ]]; then gh_state=${f[1]}; [[ ${f[1]} == rate-limited ]] && { backoff=1; gh_reset=${f[2]:-}; }; fi ;;
@@ -92,6 +92,7 @@ cmd_run() {
     [[ -n $gh_state ]] && parts+=("gh $gh_state")
   fi
   (( fetch_err )) && parts+=("$fetch_err repo$( ((fetch_err > 1)) && echo s) failed to fetch")
+  (( auth_hint )) && parts+=("check \`gh auth setup-git\`")
   (( prs_err )) && parts+=("$prs_err repo$( ((prs_err > 1)) && echo s) failed PR lookup")
   for name in "${inbox_errs[@]}"; do parts+=("inbox $name failed"); done
   if (( ${#parts[@]} )); then result=err; msg=$(IFS=';'; printf '%s' "${parts[*]}"); msg=${msg//;/; }; else result=ok msg=""; fi

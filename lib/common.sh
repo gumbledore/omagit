@@ -56,6 +56,7 @@ setting() {
 
 # Run a command with the helper timeout so a hung network call can never
 # freeze the panel. Output and exit code pass through.
+is_github() { git -C "$1" config --get remote.origin.url 2>/dev/null | grep -q "github\.com"; }
 with_timeout() { timeout --foreground -k 5 "$OMAGIT_TIMEOUT" "$@"; }
 
 # Classify an error string from a real gh call: prints logged-out,

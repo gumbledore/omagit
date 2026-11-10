@@ -12,9 +12,7 @@ import "Format.js" as Format
 // keys (Panel's PanelKeyCatcher delegates here; r / f / 1 / 2 / Tab are Panel's):
 //   j k Up Down  move the highlight      Enter / Space  open the item in the browser
 //   m  mark the highlighted notification read (Enter on a notification opens + marks it)
-//   PR / review request in a tracked repo:  c  checkout locally   o  show the repo in Repos
-// A later ticket adds a section by appending to `sectionDefs` and, for row-scoped
-// keys, handling them in handleKey() against `cursorItem` (return true when handled).
+//   item in a tracked repo:  o  show the repo in Repos   c  checkout locally (PR / review request)
 ColumnLayout {
   id: view
 
@@ -55,7 +53,7 @@ ColumnLayout {
 
   function handleKey(text) {
     if (text === "c" && hasLocalPr(cursorItem)) { checkout(cursorItem); return true }
-    if (text === "o" && hasLocalPr(cursorItem)) { panel.jumpToRepo(cursorItem.localPath); return true }
+    if (text === "o" && cursorItem && cursorItem.localPath) { panel.jumpToRepo(cursorItem.localPath); return true }
     if (text === "m" && cursorItem && cursorItem.kind === "notification") {
       panel.markNotificationRead(cursorItem.id)
       return true
@@ -294,8 +292,8 @@ ColumnLayout {
           tooltipText: "Checkout locally (c)"
           onClicked: view.checkout(entry.it)
         }
-        PanelActionButton {  // PR / review in a tracked repo: show it in Repos
-          visible: view.hasLocalPr(entry.it)
+        PanelActionButton {  // any item in a tracked repo: show it in Repos
+          visible: !!entry.it && !!entry.it.localPath
           iconText: "\udb80\udc54"
           size: Style.space(18)
           fontSize: Style.font.caption

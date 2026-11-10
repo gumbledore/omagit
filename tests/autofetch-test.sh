@@ -148,4 +148,14 @@ assert_eq "$st0" "$(git -C "$W" status --porcelain)" "status unchanged"
 assert_eq "main" "$(git -C "$W" symbolic-ref --short HEAD)" "still on main"
 [[ $(git -C "$W" rev-parse origin/main) != "$tip0" ]] && pass || fail "origin/main should have advanced"
 
+# --- auth failure: the summary carries the credential-helper hint -----------------
+A="$TMP/auth"; clone_repo "$ORIGIN" "$A"
+git -C "$A" config url."$ORIGIN".insteadOf "https://github.com/acme/auth.git"
+git -C "$A" remote set-url origin "https://github.com/acme/auth.git"
+printf '#!/bin/bash\necho "fatal: could not read Username for https://github.com: terminal prompts disabled" >&2\nexit 128\n' > "$TMP/deny-upload-pack"
+chmod +x "$TMP/deny-upload-pack"
+git -C "$A" config remote.origin.uploadpack "$TMP/deny-upload-pack"
+out=$(omagit-autofetch run auto "$A")
+assert_contains "$(rec "$out" AUTOFETCH)" 'gh auth setup-git' "auth failure hint reaches the summary"
+
 finish

@@ -109,9 +109,10 @@ IPC target `omagit` also accepts `open`, `close`, `refresh`, and
   at startup. Click or Enter opens the item (a notification is also marked
   read); the check button marks a notification read in place. **Mark all
   read** arms on the first click and confirms on the second; it affects only
-  the notifications shown. Items in a tracked repo carry a marker; on PRs and
+  the notifications shown and anything older (never ones that arrived since). Items in a tracked repo carry a marker; on PRs and
   review requests there, **Checkout** runs `gh pr checkout` in the local clone
-  (refused when the working tree is dirty) and **Open repo** jumps to its row.
+  (refused when the working tree is dirty); **Open repo** on any tracked item
+  jumps to its row.
 - **Footer** — Uninstall (arms on first click, confirms on the second within a
   few seconds): removes `~/.config/gumbledore.omagit` and runs
   `omarchy plugin remove gumbledore.omagit --yes`.
@@ -130,7 +131,7 @@ Shortcuts are off while a text field has focus (Esc leaves the field).
 | Repos: `/` · `a` | Focus the filter · toggle attention-only |
 | Repos, expanded row: `c` `b` `s` `p` `m` `u` `d` `t` `g` | Commit · Branch · Switch · PR · FF main · Fetch · Diff · Term · agent |
 | Inbox: `m` | Mark the highlighted notification read |
-| Inbox: `c` · `o` | Checkout the PR locally · show its repo (tracked repos only) |
+| Inbox: `c` · `o` | Checkout the PR locally · show the item's repo (tracked repos only) |
 
 ### Auto-fetch
 
