@@ -105,6 +105,8 @@ Panel {
     var parts = [root.repos.length + " repo" + (root.repos.length === 1 ? "" : "s")]
     if (root.attentionCount > 0) parts.push(root.attentionCount + " need attention")
     parts.push(Format.ago(root.lastFetchMs, root.nowMs))
+    var af = Format.autoFetchLine(root.autoStatus)
+    if (af !== "") parts.push(af)
     return parts.join(" · ")
   }
 
@@ -139,6 +141,7 @@ Panel {
         root.repos = list
         root.restartWatcher()
       }
+      if (!root.catchUpDone && list.length > 0) { root.catchUpDone = true; root.checkAutoFetch() }
       var paths = list.map(function(r) { return r.path })
       root.requestRead(paths)
       root.refreshHerdr()
@@ -288,40 +291,95 @@ Panel {
     onExited: function(exitCode) { root.agentName = String(agentNameOut.text || "").trim() }
   }
 
-  // ---- remote (manual only) ---------------------------------------------------
+  // ---- remote (Fetch buttons + background auto-fetch) ---------------------------
   property var prBuffer: ({})
   property var ghStatus: ({ state: "ok", reset: 0, message: "" })
+  property string fetchMode: "manual"   // mode of the run in progress; auto failures stay quiet
+  property var autoStatus: ({ ok: true, finish: 0, mode: "", message: "", next: 0 })
+  property bool catchUpDone: false
+  property bool fetchBusy: false
 
-  function fetchRepos(paths) {
+  // All fetches go through omagit-autofetch so its lock covers manual ones too.
+  // To chain work (e.g. an inbox fetch) after a fetch, hook remoteProcess.onExited.
+  function fetchRepos(paths, mode) {
     if (root.fetching || paths.length === 0) return
     root.fetching = true
+    root.fetchMode = mode || "manual"
     root.prBuffer = {}
     root.ghStatus = { state: "ok", reset: 0, message: "" }
-    remoteProcess.command = [root.binDir + "/omagit-remote"].concat(paths)
+    remoteProcess.command = [root.binDir + "/omagit-autofetch", "run", root.fetchMode].concat(paths)
     remoteProcess.running = true
   }
 
-  function fetchAll() { root.fetchRepos(root.repos.map(function(r) { return r.path })) }
+  function allPaths() { return root.repos.map(function(r) { return r.path }) }
+
+  // ---- auto-fetch: the helper decides, the timer only polls -------------------
+  function checkAutoFetch() {
+    if (root.fetching || dueProcess.running) return
+    dueProcess.running = true
+  }
+
+  property Process dueProcess: Process {
+    command: [root.binDir + "/omagit-autofetch", "due"]
+    stdout: StdioCollector { id: dueOut; waitForEnd: true }
+    onExited: function(exitCode) {
+      var recs = Format.splitRecords(dueOut.text)
+      var yes = false
+      var a = Object.assign({}, root.autoStatus)
+      for (var i = 0; i < recs.length; i++) {
+        var r = recs[i]
+        if (r[0] === "DUE") {
+          yes = r[1] === "yes"
+          a.next = parseInt(r[3]) || 0
+        } else if (r[0] === "LAST") {
+          var fin = parseInt(r[1]) || 0
+          a.finish = fin; a.ok = r[2] !== "err"; a.mode = r[3] || ""; a.message = r[4] || ""
+          if (fin * 1000 > root.lastFetchMs) root.lastFetchMs = fin * 1000
+        }
+      }
+      root.autoStatus = a
+      if (yes && !root.fetching && root.repos.length > 0) root.fetchRepos(root.allPaths(), "auto")
+    }
+  }
+
+  property Timer autoFetchTimer: Timer {
+    interval: 60000
+    repeat: true
+    running: true
+    onTriggered: root.checkAutoFetch()
+  }
+
+  function fetchAll() { root.fetchRepos(root.allPaths(), "manual") }
 
   property Process remoteProcess: Process {
     stdout: SplitParser { onRead: function(line) { root.applyRemoteLine(String(line)) } }
     onExited: function(exitCode) {
       root.fetching = false
+      if (root.fetchBusy) { root.fetchBusy = false; return }   // another fetch held the lock
       root.lastFetchMs = Date.now()
       root.nowMs = root.lastFetchMs
+      root.checkAutoFetch()   // refresh the retry time shown in the header
     }
   }
 
   function applyRemoteLine(line) {
     var r = line.split("\t")
+    if (r[0] === "BUSY") { root.fetchBusy = true; return }
     if (r.length < 2) return
     if (r[0] === "GH") {
       if (r[1] !== "ok") root.ghStatus = { state: r[1], reset: parseInt(r[2]) || 0, message: r[3] || "" }
       return
     }
+    if (r[0] === "AUTOFETCH") {
+      root.autoStatus = { ok: r[1] === "ok", finish: Math.round(Date.now() / 1000), mode: root.fetchMode,
+                          message: r[2] || "", next: parseInt(r[3]) || 0 }
+      return
+    }
     var path = r[1]
     var rs = root.remoteStatus[path] ? Object.assign({}, root.remoteStatus[path]) : {}
+    var quiet = root.fetchMode === "auto"
     if (r[0] === "FETCH") {
+      if (quiet && r[2] === "ERR") return
       rs.fetch = r[2]; rs.fetchMsg = r[3] || ""
       root.setMap("remoteStatus", path, rs)
     } else if (r[0] === "PR" && r.length >= 7) {
@@ -329,6 +387,7 @@ Panel {
       buf.push({ number: parseInt(r[2]) || 0, title: r[3], url: r[4], ci: r[5], head: r[6] })
       root.prBuffer[path] = buf
     } else if (r[0] === "PRS") {
+      if (quiet && r[2] === "ERR") return
       rs.prs = r[2]; rs.prsMsg = r[3] || ""
       root.setMap("remoteStatus", path, rs)
       if (r[2] === "OK") root.setMap("prs", path, root.prBuffer[path] || [])

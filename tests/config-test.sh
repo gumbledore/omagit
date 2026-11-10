@@ -5,7 +5,7 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 assert_no_file "$OMAGIT_CONFIG_DIR/settings.json" "no settings before first load"
 out=$(omagit-config settings)
 assert_file "$OMAGIT_CONFIG_DIR/settings.json" "settings created on first load"
-for key in schemaVersion launcher mergeStrategy deleteBranchOnMerge pruneGoneAfterMerge branchPrefix fallbackRefreshSeconds debounceMs scanDepth ignoreDirs openFileCommand ghPrLimit linkBehavior; do
+for key in schemaVersion launcher mergeStrategy deleteBranchOnMerge pruneGoneAfterMerge branchPrefix fallbackRefreshSeconds debounceMs scanDepth ignoreDirs openFileCommand ghPrLimit autoFetchMinutes linkBehavior; do
   assert_eq "true" "$(jq --arg k "$key" 'has($k)' "$OMAGIT_CONFIG_DIR/settings.json")" "settings has $key"
 done
 assert_eq "squash" "$(jq -r .mergeStrategy <<<"$out")" "settings printed to stdout"
@@ -21,6 +21,11 @@ assert_eq "1" "$(jq -r .custom <<<"$out")" "unknown key kept"
 assert_eq "browser" "$(jq -r .linkBehavior <<<"$out")" "linkBehavior merged into user file"
 jq '.linkBehavior = "webapp"' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s.json"; mv "$TMP/s.json" "$OMAGIT_CONFIG_DIR/settings.json"
 assert_eq "webapp" "$(omagit-config settings | jq -r .linkBehavior)" "user linkBehavior survives merge"
+assert_eq "30" "$(jq -r .autoFetchMinutes "$OMAGIT_CONFIG_DIR/settings.json")" "autoFetchMinutes default on bootstrap"
+jq 'del(.autoFetchMinutes)' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s.json"; mv "$TMP/s.json" "$OMAGIT_CONFIG_DIR/settings.json"
+assert_eq "30" "$(omagit-config settings | jq -r .autoFetchMinutes)" "autoFetchMinutes merged into user file lacking it"
+jq '.autoFetchMinutes = 0' "$OMAGIT_CONFIG_DIR/settings.json" > "$TMP/s.json"; mv "$TMP/s.json" "$OMAGIT_CONFIG_DIR/settings.json"
+assert_eq "0" "$(omagit-config settings | jq -r .autoFetchMinutes)" "user autoFetchMinutes survives merge"
 assert_eq "1" "$(jq -r .schemaVersion <<<"$out")" "schemaVersion recorded"
 before=$(stat -c %Y "$OMAGIT_CONFIG_DIR/settings.json")
 sleep 1

@@ -28,6 +28,19 @@ function ghBanner(status) {
   return ""
 }
 
+function hhmm(epoch) {
+  var d = new Date(epoch * 1000)
+  return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2)
+}
+
+// Header line for a failed background fetch {ok, finish, mode, next, message}; "" otherwise.
+function autoFetchLine(a) {
+  if (!a || a.ok || a.mode !== "auto" || !a.finish) return ""
+  var s = "auto-fetch failed " + hhmm(a.finish)
+  if (a.next > 0) s += " \u00b7 retry " + hhmm(a.next)
+  return s
+}
+
 // "fetched 3 min ago" style stamp from a millisecond timestamp.
 function ago(ms, nowMs) {
   if (!ms) return "never fetched"

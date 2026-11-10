@@ -22,7 +22,11 @@ if [[ -d $HOME/.config/omagit && ! -e $OMAGIT_CONFIG_DIR ]]; then mv "$HOME/.con
 OMAGIT_SETTINGS="$OMAGIT_CONFIG_DIR/settings.json"
 OMAGIT_TRACKING="$OMAGIT_CONFIG_DIR/tracking.json"
 OMAGIT_DEFAULTS="$OMAGIT_PLUGIN_DIR/defaults/settings.json"
+OMAGIT_CACHE_DIR="${OMAGIT_CACHE_DIR:-$HOME/.cache/gumbledore.omagit}"
 OMAGIT_TIMEOUT="${OMAGIT_TIMEOUT:-60}"
+
+# Current epoch seconds; tests inject time through OMAGIT_NOW.
+now() { printf '%s\n' "${OMAGIT_NOW:-$(date +%s)}"; }
 
 die() { echo "omagit: $*" >&2; exit 1; }
 

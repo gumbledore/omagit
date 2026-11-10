@@ -4,7 +4,7 @@
 set -uo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 rc=0
-for t in config state watch action remote herdr; do
+for t in config state watch action remote autofetch herdr; do
   bash "$ROOT/$t-test.sh" || rc=1
 done
 exit $rc

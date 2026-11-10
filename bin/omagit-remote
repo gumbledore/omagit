@@ -1,7 +1,7 @@
 #!/bin/bash
 # omagit-remote <repo>...: fetch + open-PR lookup, three repos at a time.
-# Only runs when the user asks (Fetch all / per-repo fetch); nothing here is
-# ever scheduled.
+# Run by the Fetch buttons and the background auto-fetch (via omagit-autofetch).
+# Only updates remote-tracking refs and reads GitHub; never touches a working tree.
 #
 #   FETCH  repo  OK|ERR|SKIP  message
 #   PR     repo  number  title  url  ci(passing|failing|pending|none)  head
