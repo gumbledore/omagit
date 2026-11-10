@@ -481,8 +481,8 @@ Panel {
         }
         PanelActionButton {
           iconText: "\udb81\udc15"
-          tooltipText: addForm.visible ? "Hide tracking" : "Add root / repo, manage tracking"
-          onClicked: addForm.visible = !addForm.visible
+          tooltipText: reposView.addFormVisible ? "Hide tracking" : "Add root / repo, manage tracking"
+          onClicked: reposView.addFormVisible = !reposView.addFormVisible
         }
         PanelActionButton {
           iconText: "\udb81\udc93"
@@ -491,93 +491,12 @@ Panel {
         }
       }
 
-      // ---------------------------------------------------------- add / tracking
-      ColumnLayout {
-        id: addForm
-        visible: false
-        Layout.fillWidth: true
-        spacing: Style.space(4)
-
-        RowLayout {
-          Layout.fillWidth: true
-          spacing: Style.space(6)
-          TextField {
-            id: addField
-            Layout.fillWidth: true
-            placeholderText: "~/projects or ~/Work/foo"
-            font.family: root.fontFamily
-            onAccepted: { root.trackPath("root", text); text = "" }
-          }
-          Button { text: "Add root"; onClicked: { root.trackPath("root", addField.text); addField.text = "" } }
-          Button { text: "Add repo"; onClicked: { root.trackPath("repo", addField.text); addField.text = "" } }
-        }
-        Repeater {
-          model: root.tracking.roots || []
-          delegate: RowLayout {
-            required property string modelData
-            Layout.fillWidth: true
-            spacing: Style.space(6)
-            Text {
-              Layout.fillWidth: true
-              text: "root  " + modelData
-              color: root.muted
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              elide: Text.ElideMiddle
-            }
-            PanelActionButton {
-              iconText: "\udb80\udd56"
-              size: Style.space(18)
-              tooltipText: "Stop tracking this root and everything under it"
-              onClicked: root.untrackRoot(modelData)
-            }
-          }
-        }
-        Text {
-          visible: root.headerMessage !== ""
-          Layout.fillWidth: true
-          text: root.headerMessage + "  ✕"
-          color: root.urgent
-          wrapMode: Text.Wrap
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.headerMessage = "" }
-        }
-      }
-
-      PanelSeparator { Layout.fillWidth: true }
-
-      // ------------------------------------------------------------- repo list
-      Text {
-        visible: root.repos.length === 0
-        Layout.fillWidth: true
-        Layout.topMargin: Style.space(8)
-        Layout.bottomMargin: Style.space(8)
-        text: root.discovering ? "Scanning…" : "No repos tracked yet. Use \udb81\udc15 to add a scan root or a single repo."
-        color: root.muted
-        wrapMode: Text.Wrap
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-      }
-
-      ListView {
-        id: list
+      // ---------------------------------------------------------------- repos
+      OmagitPanel.ReposView {
+        id: reposView
+        panel: root
         Layout.fillWidth: true
         Layout.fillHeight: true
-        Layout.minimumHeight: Math.min(contentHeight, Style.space(120))
-        implicitHeight: contentHeight
-        clip: true
-        spacing: Style.space(2)
-        cacheBuffer: 10000
-        boundsBehavior: Flickable.StopAtBounds
-        model: root.repos
-
-        delegate: OmagitPanel.RepoRow {
-          required property var modelData
-          width: list.width
-          panel: root
-          repo: modelData
-        }
       }
 
       PanelSeparator { Layout.fillWidth: true }
